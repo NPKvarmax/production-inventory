@@ -15,7 +15,7 @@ def landing_page(request):
     return render(request, 'inventory/landing.html')
 
 @login_required(login_url='login') 
-def dashboard(request, item_type): # Notice we added 'item_type' here!
+def dashboard(request, item_type):
     
     if item_type not in ['Part', 'Fastener']:
         return redirect('landing')
@@ -29,7 +29,6 @@ def dashboard(request, item_type): # Notice we added 'item_type' here!
     reorder_filter = request.GET.get('reorder')
     priority_filter = request.GET.get('priority')
     
-    # --- APPLY FILTERS ---
     if category_filter and category_filter != 'All':
         items = items.filter(category=category_filter)
         
@@ -41,16 +40,13 @@ def dashboard(request, item_type): # Notice we added 'item_type' here!
     if priority_filter and priority_filter != 'All':
         recent_requests = recent_requests.filter(priority=priority_filter)
 
-    # --- CALCULATE KPIs ---
     total_items_count = len(items) if isinstance(items, list) else items.count()
     low_stock_count = sum(1 for item in items if item.reorder_needed == 'Yes')
     total_inventory_value = sum(item.total_value for item in items)
 
-    # --- PREPARE CHART DATA ---
     chart_labels = json.dumps([item.name for item in items])
     chart_data = json.dumps([float(item.quantity) for item in items]) 
 
-    # --- PROCESS NEW REQUESTS ---
     if request.method == 'POST':
         form = StockRequestForm(request.POST, item_type=item_type)
         if form.is_valid():
@@ -84,7 +80,6 @@ def dashboard(request, item_type): # Notice we added 'item_type' here!
     }
     return render(request, 'inventory/dashboard.html', context)
 
-# --- 3. UPDATED AUTH VIEWS ---
 def login_page(request):
     if request.user.is_authenticated:
         return redirect('landing') # Redirect to landing instead of dashboard
@@ -105,7 +100,6 @@ def logout_user(request):
     logout(request)
     return redirect('login')
 
-# --- 4. EXPORT (Keeps exporting the whole warehouse) ---
 @login_required(login_url='login')
 def export_inventory_csv(request):
     if not request.user.is_superuser:
