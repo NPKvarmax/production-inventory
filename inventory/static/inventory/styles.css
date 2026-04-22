@@ -1,0 +1,71 @@
+/* Base Dark Theme with an Emerald grid background */
+body {
+    background-color: #0c1410;
+    /* Very dark green, almost black */
+    background-image:
+        linear-gradient(rgba(16, 185, 129, 0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(16, 185, 129, 0.05) 1px, transparent 1px);
+    background-size: 25px 25px;
+    color: #a7f3d0;
+    /* Soft, readable pale green for standard text */
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+/* Emerald Neon Accents */
+.text-neon {
+    color: #10b981;
+}
+
+/* Custom Cards with dark green backgrounds and emerald borders */
+.card-scifi {
+    background-color: rgba(6, 78, 59, 0.3);
+    /* Transparent deep green */
+    border: 1px solid #047857;
+    /* Mid-tone forest green */
+    border-radius: 10px;
+    box-shadow: 0 4px 15px rgba(16, 185, 129, 0.05);
+    /* Slight emerald glow */
+}
+
+.card-scifi .card-header {
+    background-color: transparent;
+    border-bottom: 1px solid #047857;
+    color: #10b981;
+    font-weight: bold;
+    letter-spacing: 1px;
+}
+
+/* Styling our tables to match the green theme */
+.table-dark-custom {
+    color: #d1fae5;
+}
+
+.table-dark-custom thead th {
+    border-bottom: 2px solid #047857;
+    color: #34d399;
+    /* Slightly brighter green for headers */
+}
+
+.table-dark-custom tbody tr {
+    border-bottom: 1px solid rgba(4, 120, 87, 0.5);
+}
+
+.table-dark-custom tbody tr:hover {
+    background-color: rgba(16, 185, 129, 0.1);
+    color: #fff;
+}
+
+/* Custom Emerald Button */
+.btn-neon {
+    background-color: transparent;
+    border: 1px solid #10b981;
+    color: #10b981;
+    transition: all 0.3s;
+}
+
+.btn-neon:hover {
+    background-color: #10b981;
+    color: #042f2e;
+    /* Very dark text when hovered so it's readable */
+    box-shadow: 0 0 10px #10b981;
+}
