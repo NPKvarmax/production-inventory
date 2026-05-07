@@ -58,6 +58,16 @@
                     <option value="R&D Prototype" {% if request.GET.priority == 'R&D Prototype' %}selected{% endif %}>R&D Prototype</option>
                     <option value="Maintenance Consumable" {% if request.GET.priority == 'Maintenance Consumable' %}selected{% endif %}>Maintenance Consumable</option>
                 </select>
+                <select name="station" class="form-select form-select-sm w-auto">
+                    <option value="All">All Stations</option>
+                    <option value="Frame Assembly" {% if request.GET.station == 'Frame Assembly' %}selected{% endif %}>Frame Assembly</option>
+                    <option value="Handle Bar" {% if request.GET.station == 'Handle Bar' %}selected{% endif %}>Handle Bar</option>
+                    <option value="Front Fork" {% if request.GET.station == 'Front Fork' %}selected{% endif %}>Front Fork</option>
+                    <option value="Bike Stand" {% if request.GET.station == 'Bike Stand' %}selected{% endif %}>Bike Stand</option>
+                    <option value="Wheel Assembly" {% if request.GET.station == 'Wheel Assembly' %}selected{% endif %}>Wheel Assembly</option>
+                    <option value="QC" {% if request.GET.station == 'QC' %}selected{% endif %}>QC</option>
+                    <option value="General" {% if request.GET.station == 'General' %}selected{% endif %}>General</option>
+                </select>
                 <button type="submit" class="btn btn-sm btn-dark">Apply</button>
                 
                 <a href="{% url 'dashboard' item_type %}" class="btn btn-sm btn-outline-secondary">Clear</a>
@@ -140,6 +150,12 @@
                             <tr>
                                 <td><span class="badge bg-secondary">{{ item.category }}</span></td>
                                 <td><strong>{{ item.name }}</strong></td>
+                                {% if item.daily_quota_hint %}
+                                    <br>
+                                    <small style="color: #ff9800; font-weight: bold;">
+                                        📌 Target: {{ item.daily_quota_hint }}
+                                    </small>
+                                {% endif %}</td>
                                 <td>{{ item.stock_in }}</td>
                                 <td><strong>{{ item.quantity }}</strong></td>
                                 <td>${{ item.unit_cost }}</td>

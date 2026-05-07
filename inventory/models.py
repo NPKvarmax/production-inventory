@@ -7,12 +7,27 @@ class InventoryItem(models.Model):
         ('Part', 'Part'),
         ('Fastener', 'Fastener'),
     ]
+
+
+    STATION_CHOICES = [
+        ('Frame Assembly', 'Frame Assembly Station'),
+        ('Handle Bar', 'Handle Bar Station'),
+        ('Front Fork', 'Front Fork Station'),
+        ('Bike Stand', 'Bike Stand Station'),
+        ('Wheel Assembly', 'Wheel Assembly Station'),
+        ('QC', 'QC Station'),
+        ('General', 'General / Multiple Stations'), 
+    ]
+
     name = models.CharField(max_length=200)
     item_type = models.CharField(max_length=20, choices=TYPE_CHOICES, default='Part')
     category = models.CharField(max_length=100, default="Uncategorized")
     stock_in = models.PositiveIntegerField(default=0)
     quantity = models.PositiveIntegerField(default=0)
     unit_cost = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+
+    station = models.CharField(max_length=50, choices=STATION_CHOICES, default='General')
+    daily_quota_hint = models.CharField(max_length=100, blank=True, null=True, help_text="e.g., 'Need 120 rims today'")
 
     @property
     def total_value(self):
