@@ -58,5 +58,22 @@ class StockRequest(models.Model):
     
     def __str__(self):
         return f"{self.quantity_requested}x {self.item.name} ({self.priority}) by {self.requester.username}"    
-    
-    
+   
+
+#Bill of Materials (BOM) Models 
+
+class BuildKit(models.Model):
+    name = models.CharField(max_length=100, help_text="e.g., Front Wheel Assembly")
+    description = models.TextField(blank=True)
+
+    def __str__(self):
+        return self.name
+
+class KitItem(models.Model):
+    #connecting a Kit to an Inventory Item
+    kit = models.ForeignKey(BuildKit, on_delete=models.CASCADE, related_name='components')
+    item = models.ForeignKey('InventoryItem', on_delete=models.CASCADE)
+    quantity_required = models.PositiveIntegerField(default=1, help_text="How many of this item are needed for this kit?")
+
+    def __str__(self):
+        return f"{self.quantity_required}x {self.item.name} for {self.kit.name}"

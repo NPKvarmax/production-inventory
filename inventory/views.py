@@ -2,9 +2,10 @@ import json
 import csv
 import openpyxl
 from datetime import datetime
-from django.shortcuts import render, redirect
+from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from .models import InventoryItem, StockRequest, BuildKit
 from django.contrib.auth.forms import AuthenticationForm
 from django.contrib.auth import login, logout
 
@@ -27,15 +28,24 @@ def dashboard(request, item_type):
     items = InventoryItem.objects.filter(item_type=item_type)
     recent_requests = StockRequest.objects.filter(item__item_type=item_type).order_by('-date_requested')
     
+    # GET KITS
+    kits = BuildKit.objects.all()
+    
     categories = items.values_list('category', flat=True).distinct()
     
+    # URL PARAMETERS 
     category_filter = request.GET.get('category')
     reorder_filter = request.GET.get('reorder')
     priority_filter = request.GET.get('priority')
     station_filter = request.GET.get('station')
+    
+    # SEARCH LOGIC 
+    search_query = request.GET.get('search', '').strip() 
+    
+    if search_query:
+        # Filter items where the name contains the search text (case-insensitive)
+        items = items.filter(name__icontains=search_query)
 
-    
-    
     if category_filter and category_filter != 'All':
         items = items.filter(category=category_filter)
 
@@ -53,8 +63,6 @@ def dashboard(request, item_type):
         recent_requests = recent_requests.filter(priority=priority_filter)
     recent_requests = recent_requests[:10]
 
-    
-    
     total_items_count = len(items) if isinstance(items, list) else items.count()
     low_stock_count = sum(1 for item in items if item.reorder_needed == 'Yes')
     total_inventory_value = sum(item.total_value for item in items)
@@ -63,21 +71,61 @@ def dashboard(request, item_type):
     chart_data = json.dumps([float(item.quantity) for item in items]) 
 
     if request.method == 'POST':
-        form = StockRequestForm(request.POST, item_type=item_type)
-        if form.is_valid():
-            stock_request = form.save(commit=False)
-            requested_item = stock_request.item
-            requested_qty = stock_request.quantity_requested
+        # KIT REQUESTS 
+        if 'request_kit' in request.POST:
+            kit_id = request.POST.get('kit_id')
+            qty_to_build = int(request.POST.get('kit_quantity', 1))
+            kit = get_object_or_404(BuildKit, id=kit_id)
+
+            # Validation (Do we have enough parts for all components?)
+            can_build = True
+            missing_parts = []
             
-            if requested_qty <= requested_item.quantity:
-                requested_item.quantity -= requested_qty
-                requested_item.save() 
-                stock_request.requester = request.user
-                stock_request.save()
-                messages.success(request, f"Successfully requested {requested_qty} of {requested_item.name}.")
-                return redirect('dashboard', item_type=item_type) 
+            for component in kit.components.all():
+                total_needed = component.quantity_required * qty_to_build
+                if component.item.quantity < total_needed:
+                    can_build = False
+                    missing_parts.append(f"{component.item.name} (Need {total_needed}, Have {component.item.quantity})")
+
+
+            if can_build:
+                for component in kit.components.all():
+                    total_needed = component.quantity_required * qty_to_build
+                    
+                    # Deduct the inventory
+                    component.item.quantity -= total_needed
+                    component.item.save()
+                    
+                    # audit log for each part
+                    StockRequest.objects.create(
+                        item=component.item,
+                        quantity_requested=total_needed,
+                        requester=request.user
+                    )
+                messages.success(request, f"Successfully pulled parts for {qty_to_build}x {kit.name}!")
             else:
-                messages.error(request, f"Error: You requested {requested_qty}, but only {requested_item.quantity} are available.")
+                # If even ONE part is missing, halt the whole process
+                messages.error(request, f"Cannot build {kit.name}. Missing parts: {', '.join(missing_parts)}")
+            
+            return redirect('dashboard', item_type=item_type)
+
+        # SINGLE ITEM REQUESTS
+        else:
+            form = StockRequestForm(request.POST, item_type=item_type)
+            if form.is_valid():
+                stock_request = form.save(commit=False)
+                requested_item = stock_request.item
+                requested_qty = stock_request.quantity_requested
+                
+                if requested_qty <= requested_item.quantity:
+                    requested_item.quantity -= requested_qty
+                    requested_item.save() 
+                    stock_request.requester = request.user
+                    stock_request.save()
+                    messages.success(request, f"Successfully requested {requested_qty} of {requested_item.name}.")
+                    return redirect('dashboard', item_type=item_type) 
+                else:
+                    messages.error(request, f"Error: You requested {requested_qty}, but only {requested_item.quantity} are available.")
     else:
         form = StockRequestForm(item_type=item_type) 
 
@@ -90,6 +138,7 @@ def dashboard(request, item_type):
     context = {
         'item_type': item_type, 
         'items': items,
+        'kits': kits, 
         'form': form,
         'recent_requests': recent_requests,
         'categories': categories,
@@ -98,9 +147,9 @@ def dashboard(request, item_type):
         'total_inventory_value': total_inventory_value,
         'chart_labels': chart_labels,
         'chart_data': chart_data,
+        'search_query': search_query,
     }
     return render(request, 'inventory/dashboard.html', context)
-
 def login_page(request):
     if request.user.is_authenticated:
         return redirect('landing')
@@ -142,18 +191,17 @@ def export_inventory_csv(request):
 
 @login_required(login_url='login')
 def executive_report(request):
-    # SECURITY: Kick out anyone who isn't a manager
+    # SECURITY
     if not request.user.is_superuser:
         messages.error(request, "Access Denied: Executive reporting only.")
         return redirect('landing')
 
     all_items = InventoryItem.objects.all()
     
-    # High-Level Metrics (Replaces manual spreadsheet math)
     total_units = sum(item.quantity for item in all_items)
     total_value = sum(item.total_value for item in all_items if hasattr(item, 'total_value')) 
 
-    # Risk Detection (Finds items like your Cable Ties that hit 0)
+    # Risk Detection
     critical_items = InventoryItem.objects.filter(quantity__lte=0)
 
     # Monthly Consumption Math

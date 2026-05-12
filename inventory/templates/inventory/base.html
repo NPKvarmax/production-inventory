@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wahu Inventory Management System</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    
+    <style>
+        :root {
+            --emerald-50: #99d4c7;
+            --emerald-100: #6bc1ae;
+            --emerald-300: #1cb08f;
+            --emerald-500: #009473; /* Primary Brand Color */
+            --emerald-900: #01604b; /* Dark Sidebar Color */
+            --bg-light: #f4f7f6;
+        }
+        
+        body {
+            background-color: var(--bg-light);
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            overflow-x: hidden;
+        }
+
+        /* SIDEBAR STYLING */
+        .sidebar {
+            background-color: var(--emerald-900);
+            min-height: 100vh;
+            color: white;
+            box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+        }
+        .sidebar .brand {
+            font-weight: 800;
+            letter-spacing: 1px;
+            color: white;
+            text-decoration: none;
+            font-size: 1.5rem;
+        }
+        .sidebar .nav-link {
+            color: var(--emerald-50);
+            border-radius: 8px;
+            margin-bottom: 5px;
+            padding: 10px 15px;
+            transition: all 0.2s;
+        }
+        .sidebar .nav-link:hover, .sidebar .nav-link.active {
+            background-color: var(--emerald-500);
+            color: white;
+            font-weight: bold;
+        }
+
+        /* BUTTONS & BADGES */
+        .btn-primary {
+            background-color: var(--emerald-500);
+            border-color: var(--emerald-500);
+        }
+        .btn-primary:hover {
+            background-color: var(--emerald-300);
+            border-color: var(--emerald-300);
+        }
+        .btn-outline-primary {
+            color: var(--emerald-500);
+            border-color: var(--emerald-500);
+        }
+        .btn-outline-primary:hover {
+            background-color: var(--emerald-500);
+            color: white;
+        }
+        .text-primary { color: var(--emerald-500) !important; }
+        .bg-primary { background-color: var(--emerald-500) !important; }
+
+        /* TABS STYLING */
+        .nav-tabs { border-bottom: 2px solid var(--emerald-100); }
+        .nav-tabs .nav-link {
+            color: #6c757d;
+            border: none;
+            font-weight: 500;
+            padding: 10px 20px;
+        }
+        .nav-tabs .nav-link.active {
+            color: var(--emerald-500);
+            background-color: transparent;
+            border-bottom: 3px solid var(--emerald-500);
+            font-weight: bold;
+        }
+        .nav-tabs .nav-link:hover:not(.active) {
+            color: var(--emerald-300);
+            border-bottom: 3px solid var(--emerald-100);
+        }
+        
+        /* CARDS */
+        .card { border: none; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
+    </style>
+</head>
+
+<body class="d-flex">
+
+    <div class="sidebar p-4" style="width: 280px;">
+        <div class="brand d-block mb-5">WAHU Inventory Management System</div>
+        
+        <div class="small text-uppercase mb-2 fw-bold" style="color: var(--emerald-100); letter-spacing: 1px;">Stock Management</div>
+        <nav class="nav flex-column mb-4">
+            <a class="nav-link" href="{% url 'dashboard' 'Part' %}">📦 Parts Stock</a>
+            <a class="nav-link" href="{% url 'dashboard' 'Fastener' %}">🔩 Fastener Stock</a>
+        </nav>
+
+        <div class="small text-uppercase mb-2 fw-bold" style="color: var(--emerald-100); letter-spacing: 1px;">Management</div>
+        <nav class="nav flex-column">
+            <a class="nav-link" href="/executive-report/">📊 Executive Report</a>
+            <a class="nav-link" href="/admin/">⚙️ System Admin</a>
+        </nav>
+        
+        <hr class="mt-5" style="border-color: var(--emerald-300);">
+        
+        <div class="d-flex flex-column mt-3 text-white">
+            <small class="mb-2">👤 Logged in as: <strong>{{ request.user.username }}</strong></small>
+            <a href="{% url 'logout' %}" class="btn btn-sm btn-outline-light w-100 mt-2" style="border-radius: 8px;">🚪 Logout</a>
+        </div>
+    </div>
+
+    <div class="flex-grow-1 overflow-auto" style="height: 100vh;">
+        <div class="container-fluid p-5">
+            {% if messages %}
+                {% for message in messages %}
+                    <div class="alert alert-{{ message.tags }} alert-dismissible fade show shadow-sm" role="alert">
+                        {{ message }}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                    </div>
+                {% endfor %}
+            {% endif %}
+
+            {% block content %}
+            {% endblock %}
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
