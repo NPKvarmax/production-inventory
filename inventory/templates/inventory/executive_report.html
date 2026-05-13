@@ -1,89 +1,178 @@
 {% extends 'inventory/base.html' %}
-
 {% block content %}
 
 <style>
+    /* Professional Print Formatting */
     @media print {
-        .sidebar { display: none !important; } /* Hides the left menu when printing */
-        .no-print { display: none !important; } /* Hides the buttons */
-        body { background-color: white !important; }
+        .sidebar { display: none !important; }
+        .no-print { display: none !important; }
+        body { background-color: white !important; -webkit-print-color-adjust: exact; }
         .card { border: none !important; box-shadow: none !important; }
         .flex-grow-1 { padding: 0 !important; overflow: visible !important; }
+        
+        /* Ensures sections don't get cut in half across pages */
+        .print-section { page-break-inside: avoid; margin-bottom: 2rem; }
+        .page-break { page-break-before: always; }
     }
+    
+    .report-table th { background-color: var(--bg-light); color: var(--emerald-900); }
 </style>
 
 <div class="d-flex justify-content-between align-items-center mb-4 no-print">
-    <h2 class="fw-bold mb-0" style="color: var(--emerald-900);">📊 Executive Dashboard</h2>
+    <h2 class="fw-bold mb-0" style="color: var(--emerald-900);">📊 Automated Executive Report</h2>
     <div>
-        <button onclick="window.print()" class="btn btn-outline-secondary rounded-pill px-4 me-2">🖨️ Print PDF</button>
-        <a href="{% url 'export_excel_report' %}" class="btn btn-primary rounded-pill px-4">⬇️ Download Excel (.xlsx)</a>
+        <button onclick="window.print()" class="btn btn-primary rounded-pill px-4 me-2">🖨️ Print to PDF</button>
+        <a href="{% url 'export_excel_report' %}" class="btn btn-outline-secondary rounded-pill px-4">⬇️ Download Excel (.xlsx)</a>
     </div>
 </div>
 
 <div class="card shadow border-0 p-5 mb-5 rounded-4" style="background-color: white;">
     
-    <div class="border-bottom border-dark pb-3 mb-5">
+    <div class="border-bottom border-dark pb-3 mb-5 print-section">
         <h1 class="fw-bold" style="color: var(--emerald-900); letter-spacing: -1px;">END-OF-MONTH INVENTORY REPORT</h1>
-        <div class="d-flex justify-content-between mt-3">
-            <h5 class="text-muted"><strong>Company:</strong> Wahu Mobility</h5>
-            <h5 class="text-muted"><strong>Reporting Period:</strong> {{ current_month_name }}</h5>
-        </div>
-    </div>
-
-    <h4 class="fw-bold mt-4 mb-3" style="color: var(--emerald-900);">1. Executive Summary</h4>
-    <p class="lead text-secondary" style="font-size: 1.1rem; line-height: 1.8;">
-       This report provides an automated comprehensive analysis of the inventory status for Wahu as of {{ current_month_name }}. 
-       Currently, the inventory maintains a robust valuation of <strong class="text-dark">${{ total_value|floatformat:2 }}</strong>, 
-       comprising <strong class="text-dark">{{ total_units }}</strong> individual units.
-    </p>
-
-    <div class="row mb-5 mt-4">
-        <div class="col-md-4">
-            <div class="card h-100 border-0 shadow-sm" style="background-color: var(--emerald-500); color: white;">
-                <div class="card-body text-center p-4">
-                    <h6 class="text-uppercase text-white-50 fw-bold mb-3">Total Inventory Value</h6>
-                    <h2 class="fw-bold mb-0">${{ total_value|floatformat:2 }}</h2>
-                </div>
+        <div class="d-flex justify-content-between mt-4">
+            <div>
+                <h5 class="text-muted mb-1"><strong>Company:</strong> Wahu Mobility</h5>
+                <h5 class="text-muted mb-0"><strong>Prepared By:</strong> Automated System</h5>
             </div>
-        </div>
-        <div class="col-md-4">
-            <div class="card h-100 border-0 shadow-sm" style="background-color: var(--bg-light);">
-                <div class="card-body text-center p-4">
-                    <h6 class="text-muted text-uppercase fw-bold mb-3">Total Units in Stock</h6>
-                    <h2 class="fw-bold mb-0 text-success">{{ total_units }} units</h2>
-                </div>
-            </div>
-        </div>
-        <div class="col-md-4">
-            <div class="card h-100 border-0 shadow-sm" style="background-color: var(--bg-light);">
-                <div class="card-body text-center p-4">
-                    <h6 class="text-muted text-uppercase fw-bold mb-3">Monthly Consumption</h6>
-                    <h2 class="fw-bold mb-0 text-danger">{{ total_parts_consumed }} pulled</h2>
-                    <small class="text-muted">Across {{ total_requests_count }} order requests</small>
-                </div>
+            <div class="text-end">
+                <h5 class="text-muted mb-1"><strong>Reporting Period:</strong> {{ report_month }}</h5>
+                <h5 class="text-muted mb-0"><strong>Generated On:</strong> {% now "F j, Y" %}</h5>
             </div>
         </div>
     </div>
 
-    <h4 class="fw-bold mt-5 mb-3" style="color: var(--emerald-900);">2. Operational Risks (Action Required)</h4>
-    
-    {% if critical_items %}
-        <div class="alert alert-danger mt-3 border-0 shadow-sm" style="border-left: 5px solid #dc3545 !important;">
-            <h5 class="alert-heading fw-bold text-danger">⚠️ Warning: Immediate Replenishment Required</h5>
-            <p class="text-dark">The following items have hit 0 stock and are halting operations:</p>
-            <ul class="mb-0 text-dark">
-                {% for item in critical_items %}
-                    <li><strong>{{ item.name }}</strong> (Station: {{ item.station }})</li>
+    <div class="print-section">
+        <h4 class="fw-bold mb-3" style="color: var(--emerald-900);">1. Executive Summary</h4>
+        <p class="lead text-secondary" style="font-size: 1.1rem; line-height: 1.8;">
+           This report provides a comprehensive, automated analysis of the inventory status for Wahu as of {{ report_month }}. 
+           Currently, the inventory maintains a robust valuation of <strong class="text-dark">${{ total_value|floatformat:2 }}</strong>, 
+           comprising <strong class="text-dark">{{ total_units }}</strong> individual units across all stations.
+        </p>
+
+        <div class="row mb-5 mt-4">
+            <div class="col-md-4">
+                <div class="card h-100 border-0 shadow-sm" style="background-color: var(--emerald-500); color: white;">
+                    <div class="card-body text-center p-4">
+                        <h6 class="text-uppercase text-white-50 fw-bold mb-3">Total Inventory Value</h6>
+                        <h2 class="fw-bold mb-0">${{ total_value|floatformat:2 }}</h2>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card h-100 border-0 shadow-sm" style="background-color: var(--bg-light);">
+                    <div class="card-body text-center p-4">
+                        <h6 class="text-muted text-uppercase fw-bold mb-3">Total Units in Stock</h6>
+                        <h2 class="fw-bold mb-0 text-success">{{ total_units }} units</h2>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card h-100 border-0 shadow-sm" style="background-color: var(--bg-light);">
+                    <div class="card-body text-center p-4">
+                        <h6 class="text-muted text-uppercase fw-bold mb-3">Monthly Requests</h6>
+                        <h2 class="fw-bold mb-0 text-primary">{{ total_requests }} Forms</h2>
+                        <small class="text-muted">Processed this month</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <h4 class="fw-bold mb-4" style="color: var(--emerald-900);">2. Detailed Analysis Sections</h4>
+
+    <div class="print-section mb-5">
+        <h5 class="fw-bold text-dark mb-3">A. Stock Movement & Usage (Fast-Moving Items)</h5>
+        <p class="text-muted mb-3">The following items experienced the highest consumption volume during the current reporting period:</p>
+        <table class="table table-bordered report-table align-middle">
+            <thead>
+                <tr>
+                    <th class="w-75">Item Name</th>
+                    <th>Total Units Pulled</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in fast_moving_items %}
+                <tr>
+                    <td class="fw-bold text-dark">{{ item.item__name }}</td>
+                    <td class="text-danger fw-bold">{{ item.total_pulled }} units</td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="2" class="text-center text-muted">No consumption data recorded for this month.</td></tr>
                 {% endfor %}
-            </ul>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="print-section mb-5">
+        <h5 class="fw-bold text-dark mb-3">B. Inventory Performance (At-Risk Inventory)</h5>
+        {% if out_of_stock %}
+            <div class="alert alert-danger border-0" style="background-color: #fff3f3; border-left: 5px solid #dc3545 !important;">
+                <h6 class="alert-heading fw-bold text-danger mb-2">⚠️ Urgent Replenishment Required</h6>
+                <p class="text-dark small mb-2">The following items have hit 0 stock and represent a direct risk to the production timeline:</p>
+                <ul class="mb-0 text-dark small fw-bold">
+                    {% for item in out_of_stock %}
+                        <li>{{ item.name }} (Station: {{ item.station }})</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        {% else %}
+            <div class="alert alert-success border-0 p-3" style="background-color: #f0fdf4; border-left: 5px solid #198754 !important;">
+                <h6 class="alert-heading fw-bold mb-1" style="color: var(--emerald-900);">✅ System Healthy</h6>
+                <p class="mb-0 text-dark small">All inventory levels are currently above 0. No critical stockouts detected.</p>
+            </div>
+        {% endif %}
+    </div>
+
+    <div class="page-break"></div>
+
+    <div class="print-section mb-5 mt-4">
+        <h5 class="fw-bold text-dark mb-3">C. Production Shortfalls (Defect Cannibalization)</h5>
+        <p class="text-muted mb-3">The following items were pulled specifically to replace defective or damaged components. High volumes here warrant immediate supplier quality audits.</p>
+        <table class="table table-bordered report-table align-middle">
+            <thead>
+                <tr>
+                    <th class="w-75">Item Replaced</th>
+                    <th>Defect Volume</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in defect_replacements %}
+                <tr>
+                    <td class="fw-bold text-dark">{{ item.item__name }}</td>
+                    <td style="color: #e67e22;" class="fw-bold">{{ item.total_replaced }} units</td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="2" class="text-center text-success fw-bold">No defect replacements logged this month!</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="print-section mb-5">
+        <h5 class="fw-bold text-dark mb-3">D. Order Priority Level Analysis</h5>
+        <p class="text-muted mb-3">A review of all submitted order forms reveals the operational stability of the production floor:</p>
+        
+        <div class="row">
+            {% for priority in priority_breakdown %}
+            <div class="col-md-6 mb-3">
+                <div class="border rounded p-3 h-100">
+                    <h6 class="fw-bold text-dark mb-2 border-bottom pb-2">{{ priority.priority }}</h6>
+                    <div class="d-flex justify-content-between align-items-center mt-2">
+                        <span class="text-muted small">Requests Submitted:</span>
+                        <span class="fw-bold">{{ priority.request_count }}</span>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center mt-1">
+                        <span class="text-muted small">Total Units Pulled:</span>
+                        <span class="fw-bold text-primary">{{ priority.total_volume }}</span>
+                    </div>
+                </div>
+            </div>
+            {% empty %}
+            <div class="col-12"><p class="text-muted">No priority data available for this month.</p></div>
+            {% endfor %}
         </div>
-    {% else %}
-        <div class="alert alert-success mt-3 border-0 shadow-sm p-4" style="border-left: 5px solid #198754 !important;">
-            <h5 class="alert-heading fw-bold mb-2" style="color: var(--emerald-900);">✅ System Healthy</h5>
-            <p class="mb-0 text-dark">All inventory levels are currently above 0. No critical stockouts detected.</p>
-        </div>
-    {% endif %}
+    </div>
 
 </div>
-
 {% endblock %}

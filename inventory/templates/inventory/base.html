@@ -106,8 +106,14 @@
 
         <div class="small text-uppercase mb-2 fw-bold" style="color: var(--emerald-100); letter-spacing: 1px;">Management</div>
         <nav class="nav flex-column">
-            <a class="nav-link" href="/executive-report/">📊 Executive Report</a>
-            <a class="nav-link" href="/admin/">⚙️ System Admin</a>
+            {% if request.user.is_superuser %}
+                <a style="color: var(--emerald-50); text-decoration: none; padding: 10px 15px; margin-bottom: 5px; border-radius: 8px;" href="{% url 'executive_report' %}">📊 Executive Report</a>
+                <a style="color: var(--emerald-50); text-decoration: none; padding: 10px 15px; margin-bottom: 5px; border-radius: 8px;" href="/admin/">⚙️ System Admin</a>
+            {% else %}
+                <div class="text-muted small p-2" style="background-color: rgba(0,0,0,0.2); border-radius: 8px;">
+                    🔒 <em>Restricted to Management</em>
+                </div>
+            {% endif %}
         </nav>
         
         <hr class="mt-5" style="border-color: var(--emerald-300);">

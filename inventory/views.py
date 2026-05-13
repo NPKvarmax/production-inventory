@@ -1,3 +1,4 @@
+from django.db.models import Sum, Count
 import json
 import csv
 import openpyxl
@@ -10,10 +11,9 @@ from django.contrib.auth.forms import AuthenticationForm
 from django.contrib.auth import login, logout
 
 from django.http import HttpResponse
-
+from django.utils.timezone import now
 from .models import InventoryItem, StockRequest
 from .forms import StockRequestForm
-from django.utils.timezone import now
 
 @login_required(login_url='login')
 def landing_page(request):
@@ -26,10 +26,19 @@ def dashboard(request, item_type):
         return redirect('landing')
 
     items = InventoryItem.objects.filter(item_type=item_type)
-    recent_requests = StockRequest.objects.filter(item__item_type=item_type).order_by('-date_requested')
-    
-    # GET KITS
-    kits = BuildKit.objects.all()
+    #RECENT OPERATIONS LOG
+    if request.user.is_superuser:
+        # Admins logs
+        recent_requests = StockRequest.objects.filter(item__item_type=item_type).order_by('-date_requested')
+    else:
+        # Regular workers logs
+        recent_requests = StockRequest.objects.filter(
+            item__item_type=item_type, 
+            requester=request.user
+        ).order_by('-date_requested')    
+
+    #GET KITS
+    kits = BuildKit.objects.filter(components__item__item_type=item_type).distinct()
     
     categories = items.values_list('category', flat=True).distinct()
     
@@ -38,34 +47,64 @@ def dashboard(request, item_type):
     reorder_filter = request.GET.get('reorder')
     priority_filter = request.GET.get('priority')
     station_filter = request.GET.get('station')
+    sort_filter = request.GET.get('sort')
     
     # SEARCH LOGIC 
     search_query = request.GET.get('search', '').strip() 
     
+    #SEARCH LOGIC 
     if search_query:
         # Filter items where the name contains the search text (case-insensitive)
         items = items.filter(name__icontains=search_query)
 
+    #CATEGORY FILTER
     if category_filter and category_filter != 'All':
         items = items.filter(category=category_filter)
-
+    
+    #STATION FILTER 
     if station_filter and station_filter != 'All':
         items = items.filter(station=station_filter)
     
     print("THE BROWSER SENT THIS STATION:", repr(station_filter))
-        
+    #SORT LOGIC
+    
+
+    #Logic for defect KPI
+    if priority_filter and priority_filter != 'All':
+        if not isinstance(items, list):
+            # Show only items that have actually had a 'Defect Replacement' request
+            items = items.filter(stockrequest__priority=priority_filter).distinct()
+    
+
+    #LOGIC FOR REORDER KPI\FILTER
     if reorder_filter == 'Yes':
         items = [item for item in items if item.reorder_needed == 'Yes']
     elif reorder_filter == 'No':
         items = [item for item in items if item.reorder_needed == 'No']
-        
+    if not isinstance(items, list):
+        items = list(items)
+    if sort_filter == 'value_desc':
+        items.sort(key=lambda x: x.total_value if hasattr(x, 'total_value') else 0, reverse=True)
+    
+    # RECENT OPERATIONS LOG (Filtered by user/priority)
+    if request.user.is_superuser:
+        recent_requests = StockRequest.objects.filter(item__item_type=item_type).order_by('-date_requested')
+    else:
+        recent_requests = StockRequest.objects.filter(item__item_type=item_type, requester=request.user).order_by('-date_requested')    
+
     if priority_filter and priority_filter != 'All':
         recent_requests = recent_requests.filter(priority=priority_filter)
+    
     recent_requests = recent_requests[:10]
-
+    #KPI CALCULATIONS
     total_items_count = len(items) if isinstance(items, list) else items.count()
     low_stock_count = sum(1 for item in items if item.reorder_needed == 'Yes')
     total_inventory_value = sum(item.total_value for item in items)
+    defect_stats = StockRequest.objects.filter(
+        item__item_type=item_type, 
+        priority='Defect Replacement'
+    ).aggregate(total=Sum('quantity_requested'))
+    defect_count = defect_stats['total'] or 0
 
     chart_labels = json.dumps([item.name for item in items])
     chart_data = json.dumps([float(item.quantity) for item in items]) 
@@ -145,6 +184,7 @@ def dashboard(request, item_type):
         'total_items_count': total_items_count,
         'low_stock_count': low_stock_count,
         'total_inventory_value': total_inventory_value,
+        'defect_count': defect_count,
         'chart_labels': chart_labels,
         'chart_data': chart_data,
         'search_query': search_query,
@@ -189,6 +229,7 @@ def export_inventory_csv(request):
 
     return response
 
+#EXECUTIVE SUMMARY REPORT
 @login_required(login_url='login')
 def executive_report(request):
     # SECURITY
@@ -196,33 +237,52 @@ def executive_report(request):
         messages.error(request, "Access Denied: Executive reporting only.")
         return redirect('landing')
 
+    # Monthly Consumption Math
+    current_year = now().year
+    current_month = now().month
+
+    #EXECUTIVE SUMMARY (Overall Health)
     all_items = InventoryItem.objects.all()
     
     total_units = sum(item.quantity for item in all_items)
     total_value = sum(item.total_value for item in all_items if hasattr(item, 'total_value')) 
 
-    # Risk Detection
-    critical_items = InventoryItem.objects.filter(quantity__lte=0)
-
-    # Monthly Consumption Math
-    current_year = now().year
-    current_month = now().month
+    # INVENTORY PERFORMANCE (At-Risk & Out of Stock)
+    out_of_stock = InventoryItem.objects.filter(quantity__lte=0)
+    low_stock = InventoryItem.objects.filter(quantity__lte=10)
     
+    #STOCK MOVEMENT (Fast-Moving Items by Volume)
     monthly_requests = StockRequest.objects.filter(
         date_requested__year=current_year,
         date_requested__month=current_month
     )
-    
-    total_parts_consumed = sum(req.quantity_requested for req in monthly_requests)
-    total_requests_count = monthly_requests.count()
+    fast_moving_items = monthly_requests.values('item__name').annotate(
+        total_pulled=Sum('quantity_requested')
+    ).order_by('-total_pulled')[:20]
+
+    #PRODUCTION SHORTFALLS (Defect Tracking)
+    defect_replacements = monthly_requests.filter(
+        priority='Defect Replacement'
+    ).values('item__name').annotate(
+        total_replaced=Sum('quantity_requested')
+    ).order_by('-total_replaced')
+
+    #PRIORITY LEVEL ANALYSIS
+    priority_breakdown = monthly_requests.values('priority').annotate(
+        request_count=Count('id'),
+        total_volume=Sum('quantity_requested')
+    )
 
     context = {
         'total_value': total_value,
         'total_units': total_units,
-        'critical_items': critical_items,
-        'total_parts_consumed': total_parts_consumed,
-        'total_requests_count': total_requests_count,
+        'out_of_stock': out_of_stock,
+        'low_stock': low_stock,
+        'fast_moving_items': fast_moving_items,
+        'defect_replacements': defect_replacements,
+        'priority_breakdown': priority_breakdown,
         'current_month_name': now().strftime("%B %Y"),
+        'total_requests': monthly_requests.count(),
     }
     return render(request, 'inventory/executive_report.html', context)
 
