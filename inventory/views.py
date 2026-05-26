@@ -75,7 +75,7 @@ def dashboard(request, item_type):
             # Show only items that have actually had a 'Defect Replacement' request
             items = items.filter(stockrequest__priority=priority_filter).distinct()
     
-
+    
     #LOGIC FOR REORDER KPI\FILTER
     if reorder_filter == 'Yes':
         items = [item for item in items if item.reorder_needed == 'Yes']
@@ -106,10 +106,80 @@ def dashboard(request, item_type):
     ).aggregate(total=Sum('quantity_requested'))
     defect_count = defect_stats['total'] or 0
 
+    #live BOM Reconciliation
+    live_deficits = []
+    total_unmatched_deficit = 0
+    #Matching Frame with all its specific child components
+    frame = InventoryItem.objects.filter(name__icontains='FRAME').first()
+    if frame:
+        frame_children_names = [
+            'LEFT CRANK', 
+            'RIGHT CRANK', 
+            'CHAINRING', 
+            'REAR DERAILLEUR', 
+            'TORQUE SENSOR', 
+            'KICKSTAND', 
+            'REAR MUDGUARD', 
+            'FENDER STAY'
+            'REAR SHOCK'
+        ]
+
+        frame_children = InventoryItem.objects.filter(name__in=frame_children_names)
+        
+        for part in frame_children:
+            if part.quantity < frame.quantity:
+                gap = frame.quantity - part.quantity
+                live_deficits.append({'part': part.name, 'gap': gap, 'parent': frame.name})
+                total_unmatched_deficit += gap
+
+    #Matching Handle bar with its specific child components
+    handlebar = InventoryItem.objects.filter(name__icontains='HANDLEBAR').first()
+    if handlebar:
+        handlebar_children_names = [
+            'GRIPS', 
+            'THROTTLE', 
+            'DISPLAY (MONITOR)', 
+            'FRONT BRAKE', 
+            'REAR BRAKE', 
+            'HANDLEBAR SWITCH',
+            'GEAR SHIFTER',
+            'MIRROR'
+        ]
+
+        handlebar_children = InventoryItem.objects.filter(name__in=handlebar_children_names)
+        
+        for part in handlebar_children:
+            if part.quantity < handlebar.quantity:
+                gap = handlebar.quantity - part.quantity
+                live_deficits.append({'part': part.name, 'gap': gap, 'parent': handlebar.name})
+                total_unmatched_deficit += gap
+    #Adding the Frame and Handlebar total unmatched deficits to the defect count
+    defect_count += total_unmatched_deficit
+
     chart_labels = json.dumps([item.name for item in items])
     chart_data = json.dumps([float(item.quantity) for item in items]) 
 
     if request.method == 'POST':
+        #Restock Operation
+        if 'restock_submit' in request.POST:
+            item_id = request.POST.get('restock_item_id')
+            qty_to_add = int(request.POST.get('restock_qty', 0))
+            
+            restock_item = get_object_or_404(InventoryItem, id=item_id)
+            restock_item.quantity += qty_to_add
+            restock_item.save()
+
+            # Log the restock so it appears in the EOM report!
+            StockRequest.objects.create(
+                item=restock_item,
+                quantity_requested=qty_to_add,
+                requester=request.user,
+                priority='Restock (Incoming)' # Special tracking tag
+            )
+            messages.success(request, f"Successfully restocked {qty_to_add} units of {restock_item.name}.")
+            return redirect('dashboard', item_type=item_type)
+
+
         # KIT REQUESTS 
         if 'request_kit' in request.POST:
             kit_id = request.POST.get('kit_id')
@@ -188,6 +258,7 @@ def dashboard(request, item_type):
         'chart_labels': chart_labels,
         'chart_data': chart_data,
         'search_query': search_query,
+        'live_deficits': live_deficits,
     }
     return render(request, 'inventory/dashboard.html', context)
 def login_page(request):
@@ -256,23 +327,87 @@ def executive_report(request):
         date_requested__year=current_year,
         date_requested__month=current_month
     )
-    fast_moving_items = monthly_requests.values('item__name').annotate(
+    #Restock
+    consumption_requests = monthly_requests.exclude(priority='Restock (Incoming)')
+
+    fast_moving_items = consumption_requests.values('item__name').annotate(
         total_pulled=Sum('quantity_requested')
     ).order_by('-total_pulled')[:20]
 
     #PRODUCTION SHORTFALLS (Defect Tracking)
-    defect_replacements = monthly_requests.filter(
+    defect_replacements = consumption_requests.filter(
         priority='Defect Replacement'
     ).values('item__name').annotate(
         total_replaced=Sum('quantity_requested')
     ).order_by('-total_replaced')
 
     #PRIORITY LEVEL ANALYSIS
-    priority_breakdown = monthly_requests.values('priority').annotate(
+    priority_breakdown = consumption_requests.values('priority').annotate(
         request_count=Count('id'),
         total_volume=Sum('quantity_requested')
     )
 
+    #RESTOCK TRACKING FOR THE REPORT
+    restock_logs = monthly_requests.filter(priority='Restock (Incoming)').values('item__name').annotate(
+        total_added=Sum('quantity_requested')
+    ).order_by('-total_added')
+
+    #Live Reconciliation
+    live_deficits = []
+    total_unmatched_deficit = 0
+    
+    #FRAME TOTALS
+    frame_qty = 0
+    frame_total_cost = 0
+
+    #Matching FRAME with all its specific child components
+    frame = InventoryItem.objects.filter(name__icontains='FRAME').first()
+    if frame:
+        frame_qty = frame.quantity
+        frame_total_cost = frame.total_value
+        
+        frame_children_names = [
+            'LEFT CRANK', 
+            'RIGHT CRANK', 
+            'CHAINRING', 
+            'REAR DERAILLEUR', 
+            'TORQUE SENSOR', 
+            'KICKSTAND', 
+            'REAR MUDGUARD', 
+            'FENDER STAY'
+            'REAR SHOCK'
+        ]
+
+        frame_children = InventoryItem.objects.filter(name__in=frame_children_names)
+        
+        for part in frame_children:
+            if part.quantity < frame.quantity:
+                gap = frame.quantity - part.quantity
+                live_deficits.append({'part': part.name, 'gap': gap, 'parent': frame.name})
+                total_unmatched_deficit += gap
+
+    #Matching Handle bar with its specific child components
+    handlebar = InventoryItem.objects.filter(name__icontains='HANDLEBAR').first()
+    if handlebar:
+        handlebar_children_names = [
+            'GRIPS', 
+            'THROTTLE', 
+            'DISPLAY (MONITOR)', 
+            'FRONT BRAKE', 
+            'REAR BRAKE', 
+            'HANDLEBAR SWITCH',
+            'GEAR SHIFTER',
+            'MIRROR'
+        ]
+
+        handlebar_children = InventoryItem.objects.filter(name__in=handlebar_children_names)
+        
+        for part in handlebar_children:
+            if part.quantity < handlebar.quantity:
+                gap = handlebar.quantity - part.quantity
+                live_deficits.append({'part': part.name, 'gap': gap, 'parent': handlebar.name})
+                total_unmatched_deficit += gap
+                
     context = {
         'total_value': total_value,
         'total_units': total_units,
@@ -281,8 +416,10 @@ def executive_report(request):
         'fast_moving_items': fast_moving_items,
         'defect_replacements': defect_replacements,
         'priority_breakdown': priority_breakdown,
+        'restock_logs': restock_logs,
         'current_month_name': now().strftime("%B %Y"),
         'total_requests': monthly_requests.count(),
+        'live_deficits': live_deficits,
     }
     return render(request, 'inventory/executive_report.html', context)
 

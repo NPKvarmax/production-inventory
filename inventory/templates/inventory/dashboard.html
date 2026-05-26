@@ -7,58 +7,76 @@
     .kit-card {
         transition: transform 0.2s, box-shadow 0.2s;
     }
+
     .kit-card:hover {
         transform: translateY(-2px);
-        box-shadow: 0 .5rem 1rem rgba(0,0,0,.15) !important;
+        box-shadow: 0 .5rem 1rem rgba(0, 0, 0, .15) !important;
     }
+
     .kit-description {
-        display: none; /* Hidden by default */
+        display: none;
+        /* Hidden by default */
         margin-top: 8px;
         margin-bottom: 0 !important;
     }
+
     .kit-card:hover .kit-description {
-        display: block; /* Shows instantly on hover */
+        display: block;
+        /* Shows instantly on hover */
         animation: fadeIn 0.2s ease-in-out;
     }
+
     @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(-3px); }
-        to { opacity: 1; transform: translateY(0); }
+        from {
+            opacity: 0;
+            transform: translateY(-3px);
+        }
+
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
     }
 </style>
 
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h2 class="fw-bold mb-0 text-dark" style="color: var(--emerald-900) !important;">⚙️ {{ item_type }} Operations</h2>
-    
+
     <form method="GET" action="{% url 'dashboard' item_type %}" class="d-flex w-50 justify-content-end">
-        <input type="text" name="search" class="form-control rounded-pill border-0 shadow-sm me-2 w-50" placeholder="Search {{ item_type }}s by name..." value="{{ search_query }}">
+        <input type="text" name="search" class="form-control rounded-pill border-0 shadow-sm me-2 w-50"
+            placeholder="Search {{ item_type }}s by name..." value="{{ search_query }}">
         {% if request.GET.category %}<input type="hidden" name="category" value="{{ request.GET.category }}">{% endif %}
         {% if request.GET.station %}<input type="hidden" name="station" value="{{ request.GET.station }}">{% endif %}
-        
+
         <button class="btn btn-primary rounded-pill px-4" type="submit">Search</button>
         {% if search_query %}
-            <a href="{% url 'dashboard' item_type %}?view=ledger" class="btn btn-outline-secondary rounded-pill ms-2">Clear</a>
+        <a href="{% url 'dashboard' item_type %}?view=ledger"
+            class="btn btn-outline-secondary rounded-pill ms-2">Clear</a>
         {% endif %}
     </form>
 </div>
 
 <ul class="nav nav-tabs mb-4" id="dashboardTabs" role="tablist">
     <li class="nav-item" role="presentation">
-        <button class="nav-link active" id="overview-tab" data-bs-toggle="tab" data-bs-target="#overview-pane" type="button" role="tab">Overview & Actions</button>
+        <button class="nav-link active" id="overview-tab" data-bs-toggle="tab" data-bs-target="#overview-pane"
+            type="button" role="tab">Overview & Actions</button>
     </li>
     <li class="nav-item" role="presentation">
-        <button class="nav-link" id="inventory-tab" data-bs-toggle="tab" data-bs-target="#inventory-pane" type="button" role="tab">Full Ledger & Filters</button>
+        <button class="nav-link" id="inventory-tab" data-bs-toggle="tab" data-bs-target="#inventory-pane" type="button"
+            role="tab">Full Ledger & Filters</button>
     </li>
 </ul>
 
 <div class="tab-content" id="dashboardTabsContent">
 
     <div class="tab-pane fade show active" id="overview-pane" role="tabpanel" tabindex="0">
-        
+
         {% if request.user.is_superuser %}
-            <div class="alert bg-white border d-flex justify-content-between align-items-center mb-4 shadow-sm rounded-3">
-                <strong style="color: var(--emerald-900);">🔒 Manager Controls</strong>
-                <a href="{% url 'export_csv' %}" class="btn btn-sm btn-outline-primary rounded-pill">⬇️ Download Complete CSV</a>
-            </div>
+        <div class="alert bg-white border d-flex justify-content-between align-items-center mb-4 shadow-sm rounded-3">
+            <strong style="color: var(--emerald-900);">🔒 Manager Controls</strong>
+            <a href="{% url 'export_csv' %}" class="btn btn-sm btn-outline-primary rounded-pill">⬇️ Download Complete
+                CSV</a>
+        </div>
         {% endif %}
 
         <div class="row mb-4">
@@ -97,19 +115,37 @@
 
             <div class="col-md-3">
                 <a href="{% url 'dashboard' item_type %}?sort=value_desc" class="text-decoration-none">
-                    <div class="card shadow-sm h-100 border-0" style="background-color: var(--emerald-900); color: white; transition: transform 0.2s;">
+                    <div class="card shadow-sm h-100 border-0"
+                        style="background-color: var(--emerald-900); color: white; transition: transform 0.2s;">
                         <div class="card-body d-flex flex-column justify-content-between">
                             <div>
                                 <h6 class="card-title text-uppercase text-white-50 fw-bold small">Total Value</h6>
                                 <h2 class="mb-0 fw-bold">${{ total_inventory_value|floatformat:2 }}</h2>
                             </div>
-                            <small class="text-white-50 mt-2"> Click to sort High → Low</small>
+                            <small class="text-white-50 mt-2">👆 Click to sort High → Low</small>
                         </div>
                     </div>
                 </a>
             </div>
         </div>
-        
+
+        {% if live_deficits %}
+        <div class="alert alert-warning border-0 shadow-sm mb-4"
+            style="border-left: 5px solid #e67e22 !important; background-color: #fff9f0;">
+            <h6 class="alert-heading fw-bold text-dark mb-2">⚠️ Component Imbalance Detected</h6>
+            <p class="small text-muted mb-2">The system detected items that do not tally with their base assemblies.
+                These missing units have been added to the Defect KPI.</p>
+            <div class="d-flex flex-wrap gap-2">
+                {% for deficit in live_deficits %}
+                <span class="badge bg-white text-dark border border-warning">
+                    <span class="text-danger fw-bold">{{ deficit.gap }}x</span> {{ deficit.part }} missing (vs. {{
+                    deficit.parent }})
+                </span>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
         <div class="row mb-4">
             <div class="col-12">
                 <div class="card shadow-sm border-0 h-100">
@@ -124,8 +160,8 @@
         </div>
 
         <div class="row mb-5">
-            
-            <div class="col-md-4 mb-4 mb-md-0"> 
+
+            <div class="col-md-4 mb-4 mb-md-0">
                 <div class="card shadow-sm border-0 h-100">
                     <div class="card-header bg-white border-bottom-0 pt-4 pb-0">
                         <h5 class="mb-0 fw-bold" style="color: var(--emerald-900);">Request {{ item_type }}</h5>
@@ -134,7 +170,8 @@
                         <form method="POST">
                             {% csrf_token %}
                             {{ form.as_p }}
-                            <button type="submit" class="btn btn-primary w-100 rounded-pill mt-2">Submit Request</button>
+                            <button type="submit" class="btn btn-primary w-100 rounded-pill mt-2">Submit
+                                Request</button>
                         </form>
                     </div>
                 </div>
@@ -142,22 +179,27 @@
 
             <div class="col-md-8">
                 {% if kits %}
-                <h5 class="mb-3 fw-bold" style="color: var(--emerald-900);"> Quick Build Kits</h5>
+                <h5 class="mb-3 fw-bold" style="color: var(--emerald-900);">⚡ Quick Build Kits</h5>
                 <div class="row">
                     {% for kit in kits %}
                     <div class="col-md-6 mb-3">
-                        <div class="card kit-card bg-white border-0 shadow-sm h-100" style="border-top: 4px solid var(--emerald-500) !important;">
+                        <div class="card kit-card bg-white border-0 shadow-sm h-100"
+                            style="border-top: 4px solid var(--emerald-500) !important;">
                             <div class="card-body">
-                                <h6 class="card-title fw-bold mb-0" style="color: var(--emerald-500);">{{ kit.name }}</h6>
-                                
+                                <h6 class="card-title fw-bold mb-0" style="color: var(--emerald-500);">{{ kit.name }}
+                                </h6>
+
                                 <p class="card-text small text-muted kit-description">{{ kit.description }}</p>
-                                
-                                <form method="POST" action="{% url 'dashboard' item_type %}" class="d-flex align-items-center mt-3">
+
+                                <form method="POST" action="{% url 'dashboard' item_type %}"
+                                    class="d-flex align-items-center mt-3">
                                     {% csrf_token %}
                                     <input type="hidden" name="kit_id" value="{{ kit.id }}">
                                     <label class="me-2 small fw-bold text-secondary">Qty:</label>
-                                    <input type="number" name="kit_quantity" value="1" min="1" class="form-control form-control-sm me-2 border-secondary" style="width: 70px;">
-                                    <button type="submit" name="request_kit" class="btn btn-sm btn-primary flex-grow-1 rounded-pill ms-2">Pull Parts</button>
+                                    <input type="number" name="kit_quantity" value="1" min="1"
+                                        class="form-control form-control-sm me-2 border-secondary" style="width: 70px;">
+                                    <button type="submit" name="request_kit"
+                                        class="btn btn-sm btn-primary flex-grow-1 rounded-pill ms-2">Pull Parts</button>
                                 </form>
                             </div>
                         </div>
@@ -166,7 +208,7 @@
                 </div>
                 {% endif %}
             </div>
-            
+
         </div>
 
         <div class="card shadow-sm border-0 mb-5">
@@ -188,21 +230,27 @@
                         {% for req in recent_requests %}
                         <tr>
                             <td><span class="text-muted small">{{ req.date_requested|date:"M d, Y H:i" }}</span></td>
-                            <td><span class="badge" style="background-color: var(--emerald-100); color: var(--emerald-900);">{{ req.requester.username }}</span></td>
+                            <td><span class="badge"
+                                    style="background-color: var(--emerald-100); color: var(--emerald-900);">{{
+                                    req.requester.username }}</span></td>
                             <td class="fw-bold">{{ req.item.name }}</td>
                             <td><span class="badge bg-light text-dark border">{{ req.priority }}</span></td>
                             <td><span class="fw-bold text-primary">{{ req.quantity_requested }}</span></td>
                         </tr>
                         {% empty %}
-                        <tr><td colspan="5" class="text-muted text-center py-4">No requests have been made yet.</td></tr>
+                        <tr>
+                            <td colspan="5" class="text-muted text-center py-4">No requests have been made yet.</td>
+                        </tr>
                         {% endfor %}
                     </tbody>
                 </table>
             </div>
         </div>
-        
-    </div> <div class="tab-pane fade" id="inventory-pane" role="tabpanel" tabindex="0">
-        
+
+    </div>
+
+    <div class="tab-pane fade" id="inventory-pane" role="tabpanel" tabindex="0">
+
         <div class="card shadow-sm border-0 mb-4">
             <div class="card-body bg-white rounded-3 d-flex flex-wrap align-items-center gap-3">
                 <strong style="color: var(--emerald-900);">🔍 Advanced Filters:</strong>
@@ -210,12 +258,14 @@
                     <select name="category" class="form-select form-select-sm w-auto border-secondary">
                         <option value="All">All Categories</option>
                         {% for cat in categories %}
-                            <option value="{{ cat }}" {% if request.GET.category == cat %}selected{% endif %}>{{ cat }}</option>
+                        <option value="{{ cat }}" {% if request.GET.category == cat %}selected{% endif %}>{{ cat }}
+                        </option>
                         {% endfor %}
                     </select>
                     <select name="reorder" class="form-select form-select-sm w-auto border-secondary">
                         <option value="All">Reorder Status</option>
-                        <option value="Yes" {% if request.GET.reorder == 'Yes' %}selected{% endif %}>Needs Reorder</option>
+                        <option value="Yes" {% if request.GET.reorder == 'Yes' %}selected{% endif %}>Needs Reorder
+                        </option>
                         <option value="No" {% if request.GET.reorder == 'No' %}selected{% endif %}>Stock OK</option>
                     </select>
                     <select name="priority" class="form-select form-select-sm w-auto border-secondary">
@@ -236,7 +286,8 @@
                         <option value="General" {% if request.GET.station == 'General' %}selected{% endif %}>General</option>
                     </select>
                     <button type="submit" class="btn btn-sm btn-primary rounded-pill px-3">Apply Filters</button>
-                    <a href="{% url 'dashboard' item_type %}?view=ledger" class="btn btn-sm btn-outline-secondary rounded-pill px-3">Clear</a>
+                    <a href="{% url 'dashboard' item_type %}?view=ledger"
+                        class="btn btn-sm btn-outline-secondary rounded-pill px-3">Clear</a>
                 </form>
             </div>
         </div>
@@ -253,6 +304,7 @@
                             <th class="border-0">Item Name</th>
                             <th class="border-0">Stock In</th>
                             <th class="border-0">Current</th>
+                            <th class="border-0 text-success">➕ Restock</th>
                             <th class="border-0">Unit Cost</th>
                             <th class="border-0">Total Value</th>
                             <th class="border-0">Reorder?</th>
@@ -265,33 +317,49 @@
                             <td>
                                 <strong class="text-dark">{{ item.name }}</strong>
                                 {% if item.daily_quota_hint %}
-                                    <br>
-                                    <span class="small fw-bold" style="color: #ff9800;">📌 Target: {{ item.daily_quota_hint }}</span>
+                                <br>
+                                <span class="small fw-bold" style="color: #ff9800;">📌 Target: {{ item.daily_quota_hint }}</span>
                                 {% endif %}
                             </td>
                             <td class="text-muted">{{ item.stock_in }}</td>
                             <td><strong style="font-size: 1.1rem;">{{ item.quantity }}</strong></td>
+                            <td>
+                                <form method="POST" class="d-flex align-items-center mb-0">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="restock_item_id" value="{{ item.id }}">
+                                    <input type="number" name="restock_qty" value="1" min="1"
+                                        class="form-control form-control-sm border-success me-1" style="width: 60px;">
+                                    <button type="submit" name="restock_submit"
+                                        class="btn btn-sm btn-success rounded-pill px-2"
+                                        title="Receive Stock">Add</button>
+                                </form>
+                            </td>
                             <td class="text-muted">${{ item.unit_cost }}</td>
                             <td><strong style="color: var(--emerald-500);">${{ item.total_value }}</strong></td>
                             <td>
                                 {% if item.reorder_needed == 'Yes' %}
-                                    <span class="badge bg-danger rounded-pill">YES</span>
+                                <span class="badge bg-danger rounded-pill">YES</span>
                                 {% else %}
-                                    <span class="badge bg-success rounded-pill">NO</span>
+                                <span class="badge bg-success rounded-pill">NO</span>
                                 {% endif %}
                             </td>
                         </tr>
                         {% empty %}
-                        <tr><td colspan="7" class="text-center py-4 text-muted">No {{ item_type }}s found matching those filters.</td></tr>
+                        <tr>
+                            <td colspan="8" class="text-center py-4 text-muted">No {{ item_type }}s found matching those filters.</td>
+                        </tr>
                         {% endfor %}
                     </tbody>
                 </table>
             </div>
         </div>
 
-    </div> </div> <script>
+    </div>
+</div>
+
+<script>
     // CHART.JS RENDERER
-    document.addEventListener("DOMContentLoaded", function() {
+    document.addEventListener("DOMContentLoaded", function () {
         const ctx = document.getElementById('inventoryChart').getContext('2d');
         const chartLabels = {{ chart_labels|safe }};
         const chartData = {{ chart_data|safe }};
@@ -303,17 +371,17 @@
                 datasets: [{
                     label: 'Current Units Available',
                     data: chartData,
-                    backgroundColor: 'rgba(0, 148, 115, 0.6)', /* Emerald 500 w/ opacity */
-                    borderColor: '#009473', /* Emerald 500 */
+                    backgroundColor: 'rgba(0, 148, 115, 0.6)',
+                    borderColor: '#009473',
                     borderWidth: 1,
                     borderRadius: 4
                 }]
             },
-            options: { 
-                responsive: true, 
-                maintainAspectRatio: false, /* Lets the chart stretch to fit our new layout */
-                scales: { 
-                    y: { beginAtZero: true } 
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: { beginAtZero: true }
                 },
                 plugins: {
                     legend: { display: false }
@@ -323,9 +391,8 @@
     });
 
     // AUTO-TAB SWITCHER FOR KPI CLICKS & CLEAR BUTTON
-    document.addEventListener("DOMContentLoaded", function() {
+    document.addEventListener("DOMContentLoaded", function () {
         const urlParams = new URLSearchParams(window.location.search);
-        // Added 'view' parameter so clearing keeps us on the ledger
         if (urlParams.has('reorder') || urlParams.has('priority') || urlParams.has('sort') || urlParams.has('view')) {
             var tabElement = document.querySelector('#inventory-tab');
             if (tabElement) {

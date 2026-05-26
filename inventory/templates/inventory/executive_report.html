@@ -127,12 +127,12 @@
     <div class="page-break"></div>
 
     <div class="print-section mb-5 mt-4">
-        <h5 class="fw-bold text-dark mb-3">C. Production Shortfalls (Defect Cannibalization)</h5>
+        <h5 class="fw-bold text-dark mb-3">C. Production Shortfalls & Reconciliation</h5>
         <p class="text-muted mb-3">The following items were pulled specifically to replace defective or damaged components. High volumes here warrant immediate supplier quality audits.</p>
-        <table class="table table-bordered report-table align-middle">
+        <table class="table table-bordered report-table align-middle mb-4">
             <thead>
                 <tr>
-                    <th class="w-75">Item Replaced</th>
+                    <th class="w-75">Item Replaced (Reported Defect)</th>
                     <th>Defect Volume</th>
                 </tr>
             </thead>
@@ -147,6 +147,30 @@
                 {% endfor %}
             </tbody>
         </table>
+
+        {% if live_deficits %}
+        <h6 class="fw-bold text-dark mt-4 mb-2">Component Imbalance (BOM Reconciliation)</h6>
+        <p class="text-muted small mb-3">The system automatically matched child components against their parent assemblies. The following items do not tally, indicating unaccounted losses, defects, or staging errors on the production floor:</p>
+        
+        <table class="table table-bordered report-table align-middle">
+            <thead style="background-color: #fff4ed;">
+                <tr>
+                    <th>Unaccounted Component</th>
+                    <th>Base Assembly (Target)</th>
+                    <th>Missing Quantity</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for deficit in live_deficits %}
+                <tr>
+                    <td class="fw-bold text-dark">{{ deficit.part }}</td>
+                    <td class="text-muted">{{ deficit.parent }}</td>
+                    <td class="text-danger fw-bold">{{ deficit.gap }} units</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
     </div>
 
     <div class="print-section mb-5">
@@ -175,4 +199,27 @@
     </div>
 
 </div>
+
+<div class="print-section mb-5 mt-4">
+        <h5 class="fw-bold text-dark mb-3">E. Inventory Replenishment (Incoming Stock)</h5>
+        <p class="text-muted mb-3">The following items received new stock shipments and were successfully logged into the system during this reporting period:</p>
+        <table class="table table-bordered report-table align-middle">
+            <thead style="background-color: #f0fdf4;">
+                <tr>
+                    <th class="w-75">Item Restocked</th>
+                    <th>Total Units Received</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for log in restock_logs %}
+                <tr>
+                    <td class="fw-bold text-dark">{{ log.item__name }}</td>
+                    <td class="text-success fw-bold">➕ {{ log.total_added }} units</td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="2" class="text-center text-muted fw-bold">No new stock received this month.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
 {% endblock %}
