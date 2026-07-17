@@ -1,6 +1,8 @@
 {% extends 'inventory/base.html' %}
 {% block content %}
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
 <style>
     /* Professional Print Formatting */
     @media print {
@@ -20,13 +22,20 @@
 
 <div class="d-flex justify-content-between align-items-center mb-4 no-print">
     <h2 class="fw-bold mb-0" style="color: var(--emerald-900);">📊 Automated Executive Report</h2>
-    <div>
-        <button onclick="window.print()" class="btn btn-primary rounded-pill px-4 me-2">🖨️ Print to PDF</button>
-        <a href="{% url 'export_excel_report' %}" class="btn btn-outline-secondary rounded-pill px-4">⬇️ Download Excel (.xlsx)</a>
+    
+    <div class="d-flex align-items-center">
+        <form method="GET" class="d-flex align-items-center me-4 bg-white px-3 py-2 rounded-pill shadow-sm">
+            <span class="text-muted small fw-bold me-2">Report Month:</span>
+            <input type="month" name="report_period" class="form-control form-control-sm border-0 bg-light rounded-3" value="{{ selected_period }}" onchange="this.form.submit()">
+        </form>
+
+        <button onclick="generatePDF()" class="btn btn-danger rounded-pill px-4 me-2 shadow-sm">📄 Download PDF</button>
+        
+        <a href="{% url 'export_excel_report' %}?report_period={{ selected_period }}" class="btn btn-success rounded-pill px-4 shadow-sm">⬇️ Download Excel</a>
     </div>
 </div>
 
-<div class="card shadow border-0 p-5 mb-5 rounded-4" style="background-color: white;">
+<div id="report-content" class="card shadow border-0 p-5 mb-5 rounded-4" style="background-color: white;">
     
     <div class="border-bottom border-dark pb-3 mb-5 print-section">
         <h1 class="fw-bold" style="color: var(--emerald-900); letter-spacing: -1px;">END-OF-MONTH INVENTORY REPORT</h1>
@@ -36,7 +45,7 @@
                 <h5 class="text-muted mb-0"><strong>Prepared By:</strong> Automated System</h5>
             </div>
             <div class="text-end">
-                <h5 class="text-muted mb-1"><strong>Reporting Period:</strong> {{ report_month }}</h5>
+                <h5 class="text-muted mb-1"><strong>Reporting Period:</strong> {{ current_month_name }}</h5>
                 <h5 class="text-muted mb-0"><strong>Generated On:</strong> {% now "F j, Y" %}</h5>
             </div>
         </div>
@@ -45,9 +54,14 @@
     <div class="print-section">
         <h4 class="fw-bold mb-3" style="color: var(--emerald-900);">1. Executive Summary</h4>
         <p class="lead text-secondary" style="font-size: 1.1rem; line-height: 1.8;">
-           This report provides a comprehensive, automated analysis of the inventory status for Wahu as of {{ report_month }}. 
-           Currently, the inventory maintains a robust valuation of <strong class="text-dark">${{ total_value|floatformat:2 }}</strong>, 
-           comprising <strong class="text-dark">{{ total_units }}</strong> individual units across all stations.
+           This report provides a comprehensive, automated analysis of the inventory status for Wahu as of <strong>{{ current_month_name }}</strong>. 
+           {% if is_historical %}
+               At the conclusion of this reporting period, the inventory maintained a valuation of <strong class="text-dark">${{ total_value|floatformat:2 }}</strong>, 
+               comprising <strong class="text-dark">{{ total_units }}</strong> historical units across all stations.
+           {% else %}
+               Currently, the real-time inventory maintains a robust valuation of <strong class="text-dark">${{ total_value|floatformat:2 }}</strong>, 
+               comprising <strong class="text-dark">{{ total_units }}</strong> individual units across all stations.
+           {% endif %}
         </p>
 
         <div class="row mb-5 mt-4">
@@ -83,22 +97,13 @@
 
     <div class="print-section mb-5">
         <h5 class="fw-bold text-dark mb-3">A. Stock Movement & Usage (Fast-Moving Items)</h5>
-        <p class="text-muted mb-3">The following items experienced the highest consumption volume during the current reporting period:</p>
         <table class="table table-bordered report-table align-middle">
-            <thead>
-                <tr>
-                    <th class="w-75">Item Name</th>
-                    <th>Total Units Pulled</th>
-                </tr>
-            </thead>
+            <thead><tr><th class="w-75">Item Name</th><th>Total Units Pulled</th></tr></thead>
             <tbody>
                 {% for item in fast_moving_items %}
-                <tr>
-                    <td class="fw-bold text-dark">{{ item.item__name }}</td>
-                    <td class="text-danger fw-bold">{{ item.total_pulled }} units</td>
-                </tr>
+                <tr><td class="fw-bold text-dark">{{ item.item__name }}</td><td class="text-danger fw-bold">{{ item.total_pulled }} units</td></tr>
                 {% empty %}
-                <tr><td colspan="2" class="text-center text-muted">No consumption data recorded for this month.</td></tr>
+                <tr><td colspan="2" class="text-center text-muted">No consumption data recorded.</td></tr>
                 {% endfor %}
             </tbody>
         </table>
@@ -109,117 +114,126 @@
         {% if out_of_stock %}
             <div class="alert alert-danger border-0" style="background-color: #fff3f3; border-left: 5px solid #dc3545 !important;">
                 <h6 class="alert-heading fw-bold text-danger mb-2">⚠️ Urgent Replenishment Required</h6>
-                <p class="text-dark small mb-2">The following items have hit 0 stock and represent a direct risk to the production timeline:</p>
                 <ul class="mb-0 text-dark small fw-bold">
-                    {% for item in out_of_stock %}
-                        <li>{{ item.name }} (Station: {{ item.station }})</li>
-                    {% endfor %}
+                    {% for item in out_of_stock %}<li>{{ item.name }} (Station: {{ item.station }})</li>{% endfor %}
                 </ul>
             </div>
         {% else %}
             <div class="alert alert-success border-0 p-3" style="background-color: #f0fdf4; border-left: 5px solid #198754 !important;">
-                <h6 class="alert-heading fw-bold mb-1" style="color: var(--emerald-900);">✅ System Healthy</h6>
-                <p class="mb-0 text-dark small">All inventory levels are currently above 0. No critical stockouts detected.</p>
+                <p class="mb-0 text-dark small">✅ System Healthy: No critical stockouts.</p>
             </div>
         {% endif %}
     </div>
 
-    <div class="page-break"></div>
-
     <div class="print-section mb-5 mt-4">
-        <h5 class="fw-bold text-dark mb-3">C. Production Shortfalls & Reconciliation</h5>
-        <p class="text-muted mb-3">The following items were pulled specifically to replace defective or damaged components. High volumes here warrant immediate supplier quality audits.</p>
-        <table class="table table-bordered report-table align-middle mb-4">
-            <thead>
-                <tr>
-                    <th class="w-75">Item Replaced (Reported Defect)</th>
-                    <th>Defect Volume</th>
-                </tr>
-            </thead>
+        <h5 class="fw-bold text-dark mb-3">C. Production Shortfalls</h5>
+        <p class="text-muted mb-3">Items pulled specifically to replace defective or damaged components.</p>
+        <table class="table table-bordered report-table align-middle">
+            <thead><tr><th class="w-75">Item Replaced</th><th>Defect Volume</th></tr></thead>
             <tbody>
                 {% for item in defect_replacements %}
-                <tr>
-                    <td class="fw-bold text-dark">{{ item.item__name }}</td>
-                    <td style="color: #e67e22;" class="fw-bold">{{ item.total_replaced }} units</td>
-                </tr>
+                <tr><td class="fw-bold text-dark">{{ item.item__name }}</td><td style="color: #e67e22;" class="fw-bold">{{ item.total_replaced }} units</td></tr>
                 {% empty %}
                 <tr><td colspan="2" class="text-center text-success fw-bold">No defect replacements logged this month!</td></tr>
                 {% endfor %}
             </tbody>
         </table>
-
-        {% if live_deficits %}
-        <h6 class="fw-bold text-dark mt-4 mb-2">Component Imbalance (BOM Reconciliation)</h6>
-        <p class="text-muted small mb-3">The system automatically matched child components against their parent assemblies. The following items do not tally, indicating unaccounted losses, defects, or staging errors on the production floor:</p>
-        
-        <table class="table table-bordered report-table align-middle">
-            <thead style="background-color: #fff4ed;">
-                <tr>
-                    <th>Unaccounted Component</th>
-                    <th>Base Assembly (Target)</th>
-                    <th>Missing Quantity</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for deficit in live_deficits %}
-                <tr>
-                    <td class="fw-bold text-dark">{{ deficit.part }}</td>
-                    <td class="text-muted">{{ deficit.parent }}</td>
-                    <td class="text-danger fw-bold">{{ deficit.gap }} units</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        {% endif %}
     </div>
 
     <div class="print-section mb-5">
         <h5 class="fw-bold text-dark mb-3">D. Order Priority Level Analysis</h5>
-        <p class="text-muted mb-3">A review of all submitted order forms reveals the operational stability of the production floor:</p>
-        
         <div class="row">
             {% for priority in priority_breakdown %}
-            <div class="col-md-6 mb-3">
-                <div class="border rounded p-3 h-100">
-                    <h6 class="fw-bold text-dark mb-2 border-bottom pb-2">{{ priority.priority }}</h6>
-                    <div class="d-flex justify-content-between align-items-center mt-2">
-                        <span class="text-muted small">Requests Submitted:</span>
-                        <span class="fw-bold">{{ priority.request_count }}</span>
-                    </div>
-                    <div class="d-flex justify-content-between align-items-center mt-1">
-                        <span class="text-muted small">Total Units Pulled:</span>
-                        <span class="fw-bold text-primary">{{ priority.total_volume }}</span>
-                    </div>
-                </div>
-            </div>
-            {% empty %}
-            <div class="col-12"><p class="text-muted">No priority data available for this month.</p></div>
+            <div class="col-md-6 mb-3"><div class="border rounded p-3 h-100">
+                <h6 class="fw-bold text-dark mb-2 border-bottom pb-2">{{ priority.priority }}</h6>
+                <div class="d-flex justify-content-between"><span>Requests:</span> <span class="fw-bold">{{ priority.request_count }}</span></div>
+                <div class="d-flex justify-content-between"><span>Total Volume:</span> <span class="fw-bold text-primary">{{ priority.total_volume }}</span></div>
+            </div></div>
             {% endfor %}
         </div>
     </div>
 
-</div>
-
-<div class="print-section mb-5 mt-4">
-        <h5 class="fw-bold text-dark mb-3">E. Inventory Replenishment (Incoming Stock)</h5>
-        <p class="text-muted mb-3">The following items received new stock shipments and were successfully logged into the system during this reporting period:</p>
+    <div class="print-section mb-5 mt-4">
+        <h5 class="fw-bold text-dark mb-3">E. Inventory Replenishment</h5>
         <table class="table table-bordered report-table align-middle">
-            <thead style="background-color: #f0fdf4;">
-                <tr>
-                    <th class="w-75">Item Restocked</th>
-                    <th>Total Units Received</th>
-                </tr>
-            </thead>
+            <thead><tr><th class="w-75">Item Restocked</th><th>Total Units Received</th></tr></thead>
             <tbody>
                 {% for log in restock_logs %}
-                <tr>
-                    <td class="fw-bold text-dark">{{ log.item__name }}</td>
-                    <td class="text-success fw-bold">➕ {{ log.total_added }} units</td>
-                </tr>
-                {% empty %}
-                <tr><td colspan="2" class="text-center text-muted fw-bold">No new stock received this month.</td></tr>
+                <tr><td class="fw-bold text-dark">{{ log.item__name }}</td><td class="text-success fw-bold">➕ {{ log.total_added }} units</td></tr>
                 {% endfor %}
             </tbody>
         </table>
     </div>
+
+    <div class="print-section mb-5 mt-4">
+        <h5 class="fw-bold text-dark mb-3">F. Inventory Accuracy & SOP Adherence</h5>
+        {% if accuracy_rate != None %}
+            <div class="alert {% if accuracy_rate >= 95 %}alert-success{% else %}alert-warning{% endif %} border-0 shadow-sm" style="border-left: 5px solid #198754 !important;">
+                <h6 class="fw-bold mb-1">Audit Accuracy: {{ accuracy_rate|floatformat:1 }}%</h6>
+            </div>
+            {% if audit_discrepancies %}
+            <table class="table table-bordered report-table align-middle">
+                <thead><tr><th>Item Name</th><th>Type</th><th>Variance</th></tr></thead>
+                <tbody>
+                    {% for discrepancy in audit_discrepancies %}
+                    <tr><td class="fw-bold">{{ discrepancy.item__name }}</td><td>{{ discrepancy.priority }}</td><td>{{ discrepancy.variance }}</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% endif %}
+        {% endif %}
+    </div>
+
+    <!-- NEW G. BOM RECONCILIATION SECTION -->
+    <div class="print-section mb-5 mt-4">
+        <h5 class="fw-bold text-dark mb-3">G. Monthly Component Reconciliation (MRP Logic)</h5>
+        <p class="text-muted mb-3">Snapshot of component imbalances detected at the end of this period.</p>
+        
+        {% if live_deficits %}
+            <table class="table table-bordered report-table align-middle">
+                <thead style="background-color: #fff4ed;">
+                    <tr>
+                        <th>Parent Assembly</th>
+                        <th>Missing Component</th>
+                        <th>Deficit Volume</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for deficit in live_deficits %}
+                    <tr>
+                        <td class="fw-bold text-dark">{{ deficit.parent }}</td>
+                        <td class="text-dark">{{ deficit.part }}</td>
+                        <td class="text-danger fw-bold">-{{ deficit.gap }} units</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        {% else %}
+            <div class="alert alert-success border-0 p-3"><p class="mb-0 text-success fw-bold">✅ No BOM deficits recorded for this period.</p></div>
+        {% endif %}
+    </div>
+
+</div> 
+
+<script>
+    function generatePDF() {
+        const element = document.getElementById('report-content');
+        const monthName = "{{ current_month_name }}".replace(" ", "_");
+        const opt = {
+            margin:       0.4,
+            filename:     'Wahu_Executive_Report_' + monthName + '.pdf',
+            image:        { type: 'jpeg', quality: 0.98 },
+            html2canvas:  { scale: 2, useCORS: true },
+            jsPDF:        { unit: 'in', format: 'letter', orientation: 'portrait' }
+        };
+        const btn = document.querySelector('button[onclick="generatePDF()"]');
+        btn.innerHTML = '⏳ Generating...';
+        btn.disabled = true;
+        html2pdf().set(opt).from(element).save().then(() => {
+            btn.innerHTML = '📄 Download PDF';
+            btn.disabled = false;
+        });
+    }
+</script>
+
 {% endblock %}

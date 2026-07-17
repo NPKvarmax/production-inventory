@@ -1,8 +1,9 @@
 from django.db.models import Sum, Count
+from django.db import transaction 
 import json
 import csv
 import openpyxl
-from datetime import datetime
+from datetime import datetime, date
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -12,12 +13,14 @@ from django.contrib.auth import login, logout
 
 from django.http import HttpResponse
 from django.utils.timezone import now
-from .models import InventoryItem, StockRequest
 from .forms import StockRequestForm
 
 @login_required(login_url='login')
 def landing_page(request):
-    return render(request, 'inventory/landing.html')
+    context = {
+        'username': request.user.username
+    }
+    return render(request, 'inventory/landing.html', context)
 
 @login_required(login_url='login') 
 def dashboard(request, item_type):
@@ -26,67 +29,36 @@ def dashboard(request, item_type):
         return redirect('landing')
 
     items = InventoryItem.objects.filter(item_type=item_type)
-    #RECENT OPERATIONS LOG
-    if request.user.is_superuser:
-        # Admins logs
-        recent_requests = StockRequest.objects.filter(item__item_type=item_type).order_by('-date_requested')
-    else:
-        # Regular workers logs
-        recent_requests = StockRequest.objects.filter(
-            item__item_type=item_type, 
-            requester=request.user
-        ).order_by('-date_requested')    
-
-    #GET KITS
     kits = BuildKit.objects.filter(components__item__item_type=item_type).distinct()
-    
     categories = items.values_list('category', flat=True).distinct()
     
-    # URL PARAMETERS 
     category_filter = request.GET.get('category')
     reorder_filter = request.GET.get('reorder')
     priority_filter = request.GET.get('priority')
     station_filter = request.GET.get('station')
     sort_filter = request.GET.get('sort')
-    
-    # SEARCH LOGIC 
     search_query = request.GET.get('search', '').strip() 
     
-    #SEARCH LOGIC 
     if search_query:
-        # Filter items where the name contains the search text (case-insensitive)
         items = items.filter(name__icontains=search_query)
-
-    #CATEGORY FILTER
     if category_filter and category_filter != 'All':
         items = items.filter(category=category_filter)
-    
-    #STATION FILTER 
     if station_filter and station_filter != 'All':
         items = items.filter(station=station_filter)
-    
-    print("THE BROWSER SENT THIS STATION:", repr(station_filter))
-    #SORT LOGIC
-    
-
-    #Logic for defect KPI
     if priority_filter and priority_filter != 'All':
         if not isinstance(items, list):
-            # Show only items that have actually had a 'Defect Replacement' request
             items = items.filter(stockrequest__priority=priority_filter).distinct()
-    
-    
-    #LOGIC FOR REORDER KPI\FILTER
     if reorder_filter == 'Yes':
         items = [item for item in items if item.reorder_needed == 'Yes']
     elif reorder_filter == 'No':
         items = [item for item in items if item.reorder_needed == 'No']
+        
     if not isinstance(items, list):
         items = list(items)
+        
     if sort_filter == 'value_desc':
         items.sort(key=lambda x: x.total_value if hasattr(x, 'total_value') else 0, reverse=True)
     
-    # RECENT OPERATIONS LOG (Filtered by user/priority)
     if request.user.is_superuser:
         recent_requests = StockRequest.objects.filter(item__item_type=item_type).order_by('-date_requested')
     else:
@@ -96,7 +68,7 @@ def dashboard(request, item_type):
         recent_requests = recent_requests.filter(priority=priority_filter)
     
     recent_requests = recent_requests[:10]
-    #KPI CALCULATIONS
+    
     total_items_count = len(items) if isinstance(items, list) else items.count()
     low_stock_count = sum(1 for item in items if item.reorder_needed == 'Yes')
     total_inventory_value = sum(item.total_value for item in items)
@@ -106,87 +78,64 @@ def dashboard(request, item_type):
     ).aggregate(total=Sum('quantity_requested'))
     defect_count = defect_stats['total'] or 0
 
-    #live BOM Reconciliation
-    live_deficits = []
-    total_unmatched_deficit = 0
-    #Matching Frame with all its specific child components
-    frame = InventoryItem.objects.filter(name__icontains='FRAME').first()
-    if frame:
-        frame_children_names = [
-            'LEFT CRANK', 
-            'RIGHT CRANK', 
-            'CHAINRING', 
-            'REAR DERAILLEUR', 
-            'TORQUE SENSOR', 
-            'KICKSTAND', 
-            'REAR MUDGUARD', 
-            'FENDER STAY'
-            'REAR SHOCK'
-        ]
-
-        frame_children = InventoryItem.objects.filter(name__in=frame_children_names)
-        
-        for part in frame_children:
-            if part.quantity < frame.quantity:
-                gap = frame.quantity - part.quantity
-                live_deficits.append({'part': part.name, 'gap': gap, 'parent': frame.name})
-                total_unmatched_deficit += gap
-
-    #Matching Handle bar with its specific child components
-    handlebar = InventoryItem.objects.filter(name__icontains='HANDLEBAR').first()
-    if handlebar:
-        handlebar_children_names = [
-            'GRIPS', 
-            'THROTTLE', 
-            'DISPLAY (MONITOR)', 
-            'FRONT BRAKE', 
-            'REAR BRAKE', 
-            'HANDLEBAR SWITCH',
-            'GEAR SHIFTER',
-            'MIRROR'
-        ]
-
-        handlebar_children = InventoryItem.objects.filter(name__in=handlebar_children_names)
-        
-        for part in handlebar_children:
-            if part.quantity < handlebar.quantity:
-                gap = handlebar.quantity - part.quantity
-                live_deficits.append({'part': part.name, 'gap': gap, 'parent': handlebar.name})
-                total_unmatched_deficit += gap
-    #Adding the Frame and Handlebar total unmatched deficits to the defect count
-    defect_count += total_unmatched_deficit
-
     chart_labels = json.dumps([item.name for item in items])
     chart_data = json.dumps([float(item.quantity) for item in items]) 
 
     if request.method == 'POST':
-        #Restock Operation
-        if 'restock_submit' in request.POST:
+        
+        #  LIVE AUDIT (PHYSICAL COUNT) OPERATION
+        if 'audit_submit' in request.POST:
+            item_id = request.POST.get('audit_item_id')
+            physical_qty = int(request.POST.get('audit_qty', 0))
+            audit_item = get_object_or_404(InventoryItem, id=item_id)
+            system_qty = audit_item.quantity
+            variance = physical_qty - system_qty
+
+            if variance == 0:
+                priority_type = 'Audit Match'
+                logged_qty = 0
+            elif variance < 0:
+                priority_type = 'Audit Shortage'
+                logged_qty = abs(variance)
+            else:
+                priority_type = 'Audit Surplus'
+                logged_qty = variance
+
+            audit_item.quantity = physical_qty
+            audit_item.save()
+
+            StockRequest.objects.create(
+                item=audit_item, quantity_requested=logged_qty,
+                requester=request.user, priority=priority_type
+            )
+            
+            if priority_type == 'Audit Match':
+                messages.success(request, f"Perfect Match! {audit_item.name} verified at {physical_qty} units.")
+            else:
+                messages.warning(request, f"Discrepancy logged. {audit_item.name} updated from {system_qty} to {physical_qty}.")
+            return redirect('dashboard', item_type=item_type)
+
+        #  RESTOCK OPERATION
+        elif 'restock_submit' in request.POST:
             item_id = request.POST.get('restock_item_id')
             qty_to_add = int(request.POST.get('restock_qty', 0))
-            
             restock_item = get_object_or_404(InventoryItem, id=item_id)
             restock_item.quantity += qty_to_add
             restock_item.save()
 
-            # Log the restock so it appears in the EOM report!
             StockRequest.objects.create(
-                item=restock_item,
-                quantity_requested=qty_to_add,
-                requester=request.user,
-                priority='Restock (Incoming)' # Special tracking tag
+                item=restock_item, quantity_requested=qty_to_add,
+                requester=request.user, priority='Restock (Incoming)' 
             )
             messages.success(request, f"Successfully restocked {qty_to_add} units of {restock_item.name}.")
             return redirect('dashboard', item_type=item_type)
 
-
-        # KIT REQUESTS 
-        if 'request_kit' in request.POST:
+        #  KIT REQUESTS 
+        elif 'request_kit' in request.POST:
             kit_id = request.POST.get('kit_id')
             qty_to_build = int(request.POST.get('kit_quantity', 1))
             kit = get_object_or_404(BuildKit, id=kit_id)
 
-            # Validation (Do we have enough parts for all components?)
             can_build = True
             missing_parts = []
             
@@ -196,59 +145,69 @@ def dashboard(request, item_type):
                     can_build = False
                     missing_parts.append(f"{component.item.name} (Need {total_needed}, Have {component.item.quantity})")
 
-
             if can_build:
                 for component in kit.components.all():
                     total_needed = component.quantity_required * qty_to_build
-                    
-                    # Deduct the inventory
                     component.item.quantity -= total_needed
                     component.item.save()
                     
-                    # audit log for each part
                     StockRequest.objects.create(
-                        item=component.item,
-                        quantity_requested=total_needed,
+                        item=component.item, quantity_requested=total_needed,
                         requester=request.user
                     )
                 messages.success(request, f"Successfully pulled parts for {qty_to_build}x {kit.name}!")
             else:
-                # If even ONE part is missing, halt the whole process
                 messages.error(request, f"Cannot build {kit.name}. Missing parts: {', '.join(missing_parts)}")
-            
             return redirect('dashboard', item_type=item_type)
 
-        # SINGLE ITEM REQUESTS
-        else:
-            form = StockRequestForm(request.POST, item_type=item_type)
-            if form.is_valid():
-                stock_request = form.save(commit=False)
-                requested_item = stock_request.item
-                requested_qty = stock_request.quantity_requested
+        # 4. BULK CATALOGUE REQUESTS (NEW!)
+        elif 'bulk_request_submit' in request.POST:
+            cart_data_raw = request.POST.get('cart_data', '[]')
+            try:
+                cart_data = json.loads(cart_data_raw)
+                if not cart_data:
+                    messages.error(request, "Your request list is empty.")
+                    return redirect('dashboard', item_type=item_type)
                 
-                if requested_qty <= requested_item.quantity:
-                    requested_item.quantity -= requested_qty
-                    requested_item.save() 
-                    stock_request.requester = request.user
-                    stock_request.save()
-                    messages.success(request, f"Successfully requested {requested_qty} of {requested_item.name}.")
-                    return redirect('dashboard', item_type=item_type) 
-                else:
-                    messages.error(request, f"Error: You requested {requested_qty}, but only {requested_item.quantity} are available.")
-    else:
-        form = StockRequestForm(item_type=item_type) 
+                # transaction.atomic() so if ONE item fails, the WHOLE cart is cancelled.
+                with transaction.atomic():
+                    # Pre-checking all items to make sure we have enough stock
+                    for item_data in cart_data:
+                        db_item = InventoryItem.objects.select_for_update().get(id=item_data['id'])
+                        qty = int(item_data['qty'])
+                        if qty > db_item.quantity:
+                            raise ValueError(f"Not enough stock for {db_item.name}. You asked for {qty}, but only {db_item.quantity} are left.")
+                    
+                    # After check, deduct stock and create logs
+                    for item_data in cart_data:
+                        db_item = InventoryItem.objects.get(id=item_data['id'])
+                        qty = int(item_data['qty'])
+                        
+                        db_item.quantity -= qty
+                        db_item.save()
+                        
+                        StockRequest.objects.create(
+                            item=db_item,
+                            quantity_requested=qty,
+                            priority=item_data['priority'],
+                            requester=request.user
+                        )
+                messages.success(request, f"Successfully requested {len(cart_data)} items from the catalogue.")
+            except ValueError as e:
+                # "Not enough stock" error
+                messages.error(request, str(e))
+            except Exception as e:
+                messages.error(request, "An unexpected error occurred while processing your list.")
+                
+            return redirect('dashboard', item_type=item_type)
 
-    if isinstance(items, list):
-        item_ids = [item.id for item in items]
-        form.fields['item'].queryset = InventoryItem.objects.filter(id__in=item_ids)
-    else:
-        form.fields['item'].queryset = items
+    available_items = InventoryItem.objects.filter(item_type=item_type)
     
     context = {
         'item_type': item_type, 
         'items': items,
         'kits': kits, 
-        'form': form,
+        'available_items': available_items,
         'recent_requests': recent_requests,
         'categories': categories,
         'total_items_count': total_items_count,
@@ -258,9 +217,10 @@ def dashboard(request, item_type):
         'chart_labels': chart_labels,
         'chart_data': chart_data,
         'search_query': search_query,
-        'live_deficits': live_deficits,
     }
     return render(request, 'inventory/dashboard.html', context)
+
+
 def login_page(request):
     if request.user.is_authenticated:
         return redirect('landing')
@@ -277,9 +237,11 @@ def login_page(request):
     context = {'form': form}
     return render(request, 'inventory/login.html', context)
 
+
 def logout_user(request):
     logout(request)
     return redirect('login')
+
 
 @login_required(login_url='login')
 def export_inventory_csv(request):
@@ -291,7 +253,7 @@ def export_inventory_csv(request):
     response['Content-Disposition'] = 'attachment; filename="complete_inventory_status.csv"'
 
     writer = csv.writer(response)
-    writer.writerow(['Type', 'Item Name', 'Current Quantity', 'Status']) # Added Type
+    writer.writerow(['Type', 'Item Name', 'Current Quantity', 'Status'])
 
     items = InventoryItem.objects.all()
     for item in items:
@@ -300,114 +262,177 @@ def export_inventory_csv(request):
 
     return response
 
-#EXECUTIVE SUMMARY REPORT
+
+# EXECUTIVE SUMMARY REPORT
 @login_required(login_url='login')
 def executive_report(request):
-    # SECURITY
     if not request.user.is_superuser:
         messages.error(request, "Access Denied: Executive reporting only.")
         return redirect('landing')
 
-    # Monthly Consumption Math
-    current_year = now().year
-    current_month = now().month
+    report_period = request.GET.get('report_period')
+    current_date = now()
+    if report_period:
+        try:
+            target_year, target_month = map(int, report_period.split('-'))
+        except ValueError:
+            target_year, target_month = current_date.year, current_date.month
+    else:
+        target_year, target_month = current_date.year, current_date.month
 
-    #EXECUTIVE SUMMARY (Overall Health)
+    report_month_name = date(target_year, target_month, 1).strftime("%B %Y")
+
     all_items = InventoryItem.objects.all()
-    
     total_units = sum(item.quantity for item in all_items)
     total_value = sum(item.total_value for item in all_items if hasattr(item, 'total_value')) 
 
-    # INVENTORY PERFORMANCE (At-Risk & Out of Stock)
+    is_historical = (target_year < current_date.year) or (target_year == current_date.year and target_month < current_date.month)
+
+    if is_historical:
+        if target_month == 12:
+            cutoff_date = datetime(target_year + 1, 1, 1)
+        else:
+            cutoff_date = datetime(target_year, target_month + 1, 1)
+            
+        future_requests = StockRequest.objects.filter(date_requested__gte=cutoff_date).select_related('item')
+        
+        for req in future_requests:
+            if req.priority in ['Restock (Incoming)', 'Audit Surplus']:
+                total_units -= req.quantity_requested
+                total_value -= (req.quantity_requested * req.item.unit_cost)
+            elif req.priority == 'Audit Match':
+                pass 
+            else:
+                total_units += req.quantity_requested
+                total_value += (req.quantity_requested * req.item.unit_cost)
+
     out_of_stock = InventoryItem.objects.filter(quantity__lte=0)
     low_stock = InventoryItem.objects.filter(quantity__lte=10)
     
-    #STOCK MOVEMENT (Fast-Moving Items by Volume)
     monthly_requests = StockRequest.objects.filter(
-        date_requested__year=current_year,
-        date_requested__month=current_month
+        date_requested__year=target_year,
+        date_requested__month=target_month
     )
-    #Restock
-    consumption_requests = monthly_requests.exclude(priority='Restock (Incoming)')
+    
+    consumption_requests = monthly_requests.exclude(
+        priority__in=['Restock (Incoming)', 'Audit Match', 'Audit Shortage', 'Audit Surplus']
+    )
 
     fast_moving_items = consumption_requests.values('item__name').annotate(
         total_pulled=Sum('quantity_requested')
     ).order_by('-total_pulled')[:20]
 
-    #PRODUCTION SHORTFALLS (Defect Tracking)
-    defect_replacements = consumption_requests.filter(
-        priority='Defect Replacement'
-    ).values('item__name').annotate(
+    defect_replacements = consumption_requests.filter(priority='Defect Replacement').values('item__name').annotate(
         total_replaced=Sum('quantity_requested')
     ).order_by('-total_replaced')
 
-    #PRIORITY LEVEL ANALYSIS
     priority_breakdown = consumption_requests.values('priority').annotate(
         request_count=Count('id'),
         total_volume=Sum('quantity_requested')
     )
 
-    #RESTOCK TRACKING FOR THE REPORT
     restock_logs = monthly_requests.filter(priority='Restock (Incoming)').values('item__name').annotate(
         total_added=Sum('quantity_requested')
     ).order_by('-total_added')
 
-    #Live Reconciliation
+    audit_logs = monthly_requests.filter(priority__startswith='Audit')
+    total_audits = audit_logs.count()
+    total_matches = audit_logs.filter(priority='Audit Match').count()
+    
+    accuracy_rate = None
+    if total_audits > 0:
+        accuracy_rate = (total_matches / total_audits) * 100
+
+    audit_discrepancies = audit_logs.exclude(priority='Audit Match').values(
+        'item__name', 'priority'
+    ).annotate(
+        variance=Sum('quantity_requested')
+    ).order_by('-variance')
+
     live_deficits = []
     total_unmatched_deficit = 0
-    
-    #FRAME TOTALS
-    frame_qty = 0
-    frame_total_cost = 0
 
-    #Matching FRAME with all its specific child components
     frame = InventoryItem.objects.filter(name__icontains='FRAME').first()
     if frame:
-        frame_qty = frame.quantity
-        frame_total_cost = frame.total_value
-        
         frame_children_names = [
-            'LEFT CRANK', 
-            'RIGHT CRANK', 
-            'CHAINRING', 
-            'REAR DERAILLEUR', 
-            'TORQUE SENSOR', 
-            'KICKSTAND', 
-            'REAR MUDGUARD', 
-            'FENDER STAY'
-            'REAR SHOCK'
+            'LEFT CRANK', 'RIGHT CRANK', 'CHAINRING', 'REAR DERAILLEUR', 
+            'TORQUE SENSOR', 'KICKSTAND', 'REAR MUDGUARD', 'FENDER STAY', 'REAR SHOCK'
         ]
-
-        frame_children = InventoryItem.objects.filter(name__in=frame_children_names)
-        
-        for part in frame_children:
+        for part in InventoryItem.objects.filter(name__in=frame_children_names):
             if part.quantity < frame.quantity:
                 gap = frame.quantity - part.quantity
                 live_deficits.append({'part': part.name, 'gap': gap, 'parent': frame.name})
                 total_unmatched_deficit += gap
 
-    #Matching Handle bar with its specific child components
     handlebar = InventoryItem.objects.filter(name__icontains='HANDLEBAR').first()
     if handlebar:
         handlebar_children_names = [
-            'GRIPS', 
-            'THROTTLE', 
-            'DISPLAY (MONITOR)', 
-            'FRONT BRAKE', 
-            'REAR BRAKE', 
-            'HANDLEBAR SWITCH',
-            'GEAR SHIFTER',
-            'MIRROR'
+            'GRIPS', 'THROTTLE', 'DISPLAY (MONITOR)', 'FRONT BRAKE', 
+            'REAR BRAKE', 'HANDLEBAR SWITCH', 'GEAR SHIFTER', 'MIRROR'
         ]
-
-        handlebar_children = InventoryItem.objects.filter(name__in=handlebar_children_names)
-        
-        for part in handlebar_children:
+        for part in InventoryItem.objects.filter(name__in=handlebar_children_names):
             if part.quantity < handlebar.quantity:
                 gap = handlebar.quantity - part.quantity
                 live_deficits.append({'part': part.name, 'gap': gap, 'parent': handlebar.name})
                 total_unmatched_deficit += gap
-                
+
+    front_hub = InventoryItem.objects.filter(name__icontains='FRONT HUB').first()
+    if front_hub:
+        for part in InventoryItem.objects.filter(name__in=['FRONT TUBE', 'FRONT TYRE']):
+            if part.quantity < front_hub.quantity:
+                gap = front_hub.quantity - part.quantity
+                live_deficits.append({'part': part.name, 'gap': gap, 'parent': front_hub.name})
+                total_unmatched_deficit += gap
+        
+        front_spokes = InventoryItem.objects.filter(name__icontains='FRONT SPOKE').first()
+        if front_spokes:
+            expected_spokes = front_hub.quantity * 36
+            if front_spokes.quantity < expected_spokes:
+                gap = expected_spokes - front_spokes.quantity
+                live_deficits.append({'part': front_spokes.name, 'gap': gap, 'parent': f"{front_hub.name} (Requires 36x)"})
+                total_unmatched_deficit += gap
+
+    motor = InventoryItem.objects.filter(name__icontains='MOTOR').exclude(name__icontains='CABLE').first()
+    if motor:
+        for part in InventoryItem.objects.filter(name__in=['REAR TUBE', 'REAR TYRE']):
+            if part.quantity < motor.quantity:
+                gap = motor.quantity - part.quantity
+                live_deficits.append({'part': part.name, 'gap': gap, 'parent': motor.name})
+                total_unmatched_deficit += gap
+        
+        rear_spokes = InventoryItem.objects.filter(name__icontains='REAR SPOKE').first()
+        if rear_spokes:
+            expected_spokes = motor.quantity * 36
+            if rear_spokes.quantity < expected_spokes:
+                gap = expected_spokes - rear_spokes.quantity
+                live_deficits.append({'part': rear_spokes.name, 'gap': gap, 'parent': f"{motor.name} (Requires 36x)"})
+                total_unmatched_deficit += gap
+
+    balancer = InventoryItem.objects.filter(name__icontains='BALANCER MODULE').first()
+    if balancer:
+        balancer_children = [
+            'CHAIN', 'PEDALS', 'STEM', 'CABLE SET: DERAILLEUR OUTER CABLE', 
+            'BATTERY MOUNT C', 'BATTERY MOUNT D', 'CONTROLLER', 
+            'EB-BUS CABLE 1', 'EB-BUS CABLE 2', 'MOTOR EXTENSION CABLE'
+        ]
+        for part in InventoryItem.objects.filter(name__in=balancer_children):
+            if part.quantity < balancer.quantity:
+                gap = balancer.quantity - part.quantity
+                live_deficits.append({'part': part.name, 'gap': gap, 'parent': balancer.name})
+                total_unmatched_deficit += gap
+
+    fork = InventoryItem.objects.filter(name__icontains='FORK').first()
+    if fork:
+        fork_children = [
+            'FRONT LIGHT', 'HORN', 'FRONT MUDGUARD', 
+            'FRONT LIGHT BRACKET SET', 'TORQUE SENSOR CABLE'
+        ]
+        for part in InventoryItem.objects.filter(name__in=fork_children):
+            if part.quantity < fork.quantity:
+                gap = fork.quantity - part.quantity
+                live_deficits.append({'part': part.name, 'gap': gap, 'parent': fork.name})
+                total_unmatched_deficit += gap
+
     context = {
         'total_value': total_value,
         'total_units': total_units,
@@ -417,11 +442,17 @@ def executive_report(request):
         'defect_replacements': defect_replacements,
         'priority_breakdown': priority_breakdown,
         'restock_logs': restock_logs,
-        'current_month_name': now().strftime("%B %Y"),
+        'current_month_name': report_month_name,
+        'selected_period': f"{target_year}-{target_month:02d}",
         'total_requests': monthly_requests.count(),
         'live_deficits': live_deficits,
+        'is_historical': is_historical,
+        'accuracy_rate': accuracy_rate,
+        'total_audits': total_audits,
+        'audit_discrepancies': audit_discrepancies,
     }
     return render(request, 'inventory/executive_report.html', context)
+
 
 @login_required(login_url='login')
 def export_excel_report(request):
@@ -429,10 +460,19 @@ def export_excel_report(request):
         messages.error(request, "Access Denied.")
         return redirect('landing')
 
-    #Creating a blank Excel Workbook
+    report_period = request.GET.get('report_period')
+    if report_period:
+        try:
+            target_year, target_month = map(int, report_period.split('-'))
+        except ValueError:
+            target_year, target_month = now().year, now().month
+    else:
+        target_year, target_month = now().year, now().month
+
+    report_month_name = date(target_year, target_month, 1).strftime("%b_%Y")
+
     wb = openpyxl.Workbook()
     
-    # OVERVIEW TAB 
     ws1 = wb.active
     ws1.title = "Inventory Overview"
     ws1.append(["Company", "Wahu Mobility"])
@@ -445,25 +485,24 @@ def export_excel_report(request):
         val = item.total_value if hasattr(item, 'total_value') else 0 
         ws1.append([item.name, item.category, item.station, item.quantity, val])
 
-    #MONTHLY CONSUMPTION TAB 
-    ws2 = wb.create_sheet(title="Monthly Consumption")
-    ws2.append(["Date Requested", "Item Name", "Quantity Pulled", "Requester"])
+    ws2 = wb.create_sheet(title=f"Logs {report_month_name}")
+    ws2.append(["Date Requested", "Item Name", "Priority/Type", "Quantity", "Requester"])
     
-    current_month = datetime.now().month
-    current_year = datetime.now().year
     monthly_requests = StockRequest.objects.filter(
-        date_requested__year=current_year, 
-        date_requested__month=current_month
-    )
+        date_requested__year=target_year, 
+        date_requested__month=target_month
+    ).order_by('-date_requested')
+
     for req in monthly_requests:
+        user_name = req.requester.username if req.requester else "System / Admin"
         ws2.append([
             req.date_requested.strftime("%Y-%m-%d"), 
             req.item.name, 
+            req.priority,
             req.quantity_requested, 
-            req.requester.username
+            user_name
         ])
 
-    # URGENT ACTIONS (0 Stock) TAB
     ws3 = wb.create_sheet(title="Urgent Actions")
     ws3.append(["URGENT RESTOCK REQUIRED"])
     ws3.append(["Item Name", "Station", "Last Known Quantity"])
@@ -472,9 +511,106 @@ def export_excel_report(request):
     for item in critical_items:
         ws3.append([item.name, item.station, item.quantity])
 
-    # Pushing to the browser as a download!
     response = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-    response['Content-Disposition'] = f'attachment; filename="Wahu_Inventory_Report_{datetime.now().strftime("%b_%Y")}.xlsx"'
+    response['Content-Disposition'] = f'attachment; filename="Wahu_Inventory_Report_{report_month_name}.xlsx"'
     
     wb.save(response)
     return response
+
+# BOM RECONCILIATION & MRP DASHBOARD
+
+@login_required(login_url='login')
+def bom_reconciliation(request):
+    if not request.user.is_superuser:
+        messages.error(request, "Access Denied: Manager clearance required.")
+        return redirect('landing')
+
+    live_deficits = []
+    total_unmatched_deficit = 0
+
+    frame = InventoryItem.objects.filter(name__icontains='FRAME').first()
+    if frame:
+        frame_children_names = [
+            'LEFT CRANK', 'RIGHT CRANK', 'CHAINRING', 'REAR DERAILLEUR', 
+            'TORQUE SENSOR', 'KICKSTAND', 'REAR MUDGUARD', 'FENDER STAY', 'REAR SHOCK'
+        ]
+        for part in InventoryItem.objects.filter(name__in=frame_children_names):
+            if part.quantity < frame.quantity:
+                gap = frame.quantity - part.quantity
+                live_deficits.append({'part': part.name, 'gap': gap, 'parent': frame.name, 'ratio': '1:1'})
+                total_unmatched_deficit += gap
+
+    handlebar = InventoryItem.objects.filter(name__icontains='HANDLEBAR').first()
+    if handlebar:
+        handlebar_children_names = [
+            'GRIPS', 'THROTTLE', 'DISPLAY (MONITOR)', 'FRONT BRAKE', 
+            'REAR BRAKE', 'HANDLEBAR SWITCH', 'GEAR SHIFTER', 'MIRROR'
+        ]
+        for part in InventoryItem.objects.filter(name__in=handlebar_children_names):
+            if part.quantity < handlebar.quantity:
+                gap = handlebar.quantity - part.quantity
+                live_deficits.append({'part': part.name, 'gap': gap, 'parent': handlebar.name, 'ratio': '1:1'})
+                total_unmatched_deficit += gap
+
+    front_hub = InventoryItem.objects.filter(name__icontains='FRONT HUB').first()
+    if front_hub:
+        for part in InventoryItem.objects.filter(name__in=['FRONT TUBE', 'FRONT TYRE']):
+            if part.quantity < front_hub.quantity:
+                gap = front_hub.quantity - part.quantity
+                live_deficits.append({'part': part.name, 'gap': gap, 'parent': front_hub.name, 'ratio': '1:1'})
+                total_unmatched_deficit += gap
+        
+        front_spokes = InventoryItem.objects.filter(name__icontains='FRONT SPOKE').first()
+        if front_spokes:
+            expected_spokes = front_hub.quantity * 36
+            if front_spokes.quantity < expected_spokes:
+                gap = expected_spokes - front_spokes.quantity
+                live_deficits.append({'part': front_spokes.name, 'gap': gap, 'parent': front_hub.name, 'ratio': '36:1'})
+                total_unmatched_deficit += gap
+
+    motor = InventoryItem.objects.filter(name__icontains='MOTOR').exclude(name__icontains='CABLE').first()
+    if motor:
+        for part in InventoryItem.objects.filter(name__in=['REAR TUBE', 'REAR TYRE']):
+            if part.quantity < motor.quantity:
+                gap = motor.quantity - part.quantity
+                live_deficits.append({'part': part.name, 'gap': gap, 'parent': motor.name, 'ratio': '1:1'})
+                total_unmatched_deficit += gap
+        
+        rear_spokes = InventoryItem.objects.filter(name__icontains='REAR SPOKE').first()
+        if rear_spokes:
+            expected_spokes = motor.quantity * 36
+            if rear_spokes.quantity < expected_spokes:
+                gap = expected_spokes - rear_spokes.quantity
+                live_deficits.append({'part': rear_spokes.name, 'gap': gap, 'parent': motor.name, 'ratio': '36:1'})
+                total_unmatched_deficit += gap
+
+    balancer = InventoryItem.objects.filter(name__icontains='BALANCER MODULE').first()
+    if balancer:
+        balancer_children = [
+            'CHAIN', 'PEDALS', 'STEM', 'CABLE SET: DERAILLEUR OUTER CABLE', 
+            'BATTERY MOUNT C', 'BATTERY MOUNT D', 'CONTROLLER', 
+            'EB-BUS CABLE 1', 'EB-BUS CABLE 2', 'MOTOR EXTENSION CABLE'
+        ]
+        for part in InventoryItem.objects.filter(name__in=balancer_children):
+            if part.quantity < balancer.quantity:
+                gap = balancer.quantity - part.quantity
+                live_deficits.append({'part': part.name, 'gap': gap, 'parent': balancer.name, 'ratio': '1:1'})
+                total_unmatched_deficit += gap
+
+    fork = InventoryItem.objects.filter(name__icontains='FORK').first()
+    if fork:
+        fork_children = [
+            'FRONT LIGHT', 'HORN', 'FRONT MUDGUARD', 
+            'FRONT LIGHT BRACKET SET', 'TORQUE SENSOR CABLE'
+        ]
+        for part in InventoryItem.objects.filter(name__in=fork_children):
+            if part.quantity < fork.quantity:
+                gap = fork.quantity - part.quantity
+                live_deficits.append({'part': part.name, 'gap': gap, 'parent': fork.name, 'ratio': '1:1'})
+                total_unmatched_deficit += gap
+
+    context = {
+        'live_deficits': live_deficits,
+        'total_unmatched': total_unmatched_deficit
+    }
+    return render(request, 'inventory/reconciliation.html', context)

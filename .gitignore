@@ -1,12 +1,17 @@
-# Ignore the virtual environment
+# Virtual Environment
+myenv/
+env/
 venv/
 
-# Ignore Mac system files
-.DS_Store
-
-# Ignore Python compiled cache files
-*.pyc
-__pycache__/
-
-# Ignore the local database
+# Django Database & Secrets
+*.sqlite3
+*.env
 db.sqlite3
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# OS Files
+.DS_Store

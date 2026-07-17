@@ -1,0 +1,63 @@
+{% extends 'inventory/base.html' %}
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <span class="badge bg-white text-uppercase px-3 py-2 rounded-pill shadow-sm mb-2" style="color: #e67e22; border: 1px solid #fdcb6e;">
+            MRP Diagnostics
+        </span>
+        <h2 class="fw-bold mb-0 text-dark">BOM Reconciliation</h2>
+        <p class="text-muted small mt-1">Live tracking of component imbalances against parent assemblies.</p>
+    </div>
+    
+    <a href="{% url 'landing' %}" class="btn btn-outline-secondary rounded-pill px-4 shadow-sm">⬅️ Back to Hub</a>
+</div>
+
+{% if total_unmatched == 0 %}
+    <div class="card shadow-sm border-0 rounded-4 text-center py-5" style="background-color: #f0fdf4;">
+        <div class="card-body py-5">
+            <h1 style="font-size: 4rem;">✅</h1>
+            <h3 class="fw-bold text-success mt-3">All Assemblies Tally Perfectly!</h3>
+            <p class="text-muted">No missing components detected across any production stream.</p>
+        </div>
+    </div>
+{% else %}
+    <div class="alert alert-danger border-0 shadow-sm mb-4 rounded-4 p-4" style="background-color: #fff5f5; border-left: 6px solid #dc3545 !important;">
+        <h5 class="alert-heading fw-bold text-danger mb-2">⚠️ Shrinkage Detected: {{ total_unmatched }} Units Missing</h5>
+        <p class="mb-0 text-dark">The system has detected that child components have been pulled at lower quantities than their parent assemblies, indicating unlogged usage, defects, or staging losses.</p>
+    </div>
+
+    <div class="card shadow-sm border-0 rounded-4">
+        <div class="card-header bg-white border-bottom-0 pt-4 pb-2">
+            <h5 class="fw-bold" style="color: var(--emerald-900);">Detailed Deficit Matrix</h5>
+        </div>
+        <div class="card-body table-responsive">
+            <table class="table table-hover align-middle">
+                <thead style="background-color: var(--bg-light);">
+                    <tr>
+                        <th class="border-0">Parent Assembly</th>
+                        <th class="border-0">Expected Ratio</th>
+                        <th class="border-0 text-danger">Missing Component</th>
+                        <th class="border-0">Deficit Volume</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for deficit in live_deficits %}
+                    <tr>
+                        <td class="fw-bold text-secondary">{{ deficit.parent }}</td>
+                        <td><span class="badge bg-light text-dark border">{{ deficit.ratio }}</span></td>
+                        <td class="fw-bold text-dark">{{ deficit.part }}</td>
+                        <td>
+                            <span class="badge bg-danger rounded-pill px-3 py-2" style="font-size: 0.9rem;">
+                                -{{ deficit.gap }} units
+                            </span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+{% endif %}
+
+{% endblock %}
